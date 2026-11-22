@@ -17,7 +17,7 @@ adb shell dumpsys activity activities | grep -E "mResumedActivity|topResumedActi
 
 # 2) Com permissão e partituras de teste
 adb shell mkdir -p "/sdcard/Partituras/Casamentos" "/sdcard/Partituras/Pop Rock"
-for f in test/pdfs/*.pdf; do
+for f in test/pdfs/*; do
   adb push "$f" "/sdcard/Partituras/Casamentos/"
   adb push "$f" "/sdcard/Partituras/Pop Rock/"
 done
@@ -36,11 +36,17 @@ adb shell monkey -p $PKG -c android.intent.category.LAUNCHER 1
 sleep 5
 adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb pull /sdcard/ui.xml out/ui.xml
 
+# 4) Autoteste de PDF/exportação
+adb shell am force-stop $PKG
+adb shell am start -n $PKG/.MainActivity --es selftest /sdcard/Partituras/Casamentos
+sleep 20
+
 adb logcat -d > out/logcat-completo.txt
 grep -E "AndroidRuntime|FATAL|$PKG|estante" out/logcat-completo.txt > out/logcat-app.txt
 set +x
 for f in out/install.txt out/atividade-1.txt out/atividade-2.txt; do echo "===== $f"; cat "$f"; done
 for f in out/ui1.xml out/ui2.xml out/ui.xml; do echo "===== TEXTOS $f"; grep -o 'text="[^"]*"' "$f" | grep -v 'text=""' | head -60; grep -o 'content-desc="[^"]*"' "$f" | grep -v '=""' | head -30; done
+echo "===== AUTOTESTE"; grep -E "ESTANTE_SELFTEST" -A 8 out/logcat-completo.txt | head -60
 echo "===== ERROS"; grep -E "FATAL|AndroidRuntime|E/.*estante" -A 25 out/logcat-completo.txt | head -150
 echo "===== FIM"
 exit 0

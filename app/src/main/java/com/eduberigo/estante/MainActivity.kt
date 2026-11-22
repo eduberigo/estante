@@ -50,6 +50,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         com.tom_roush.pdfbox.android.PDFBoxResourceLoader.init(applicationContext)
         hasPermission.value = Environment.isExternalStorageManager()
+        intent?.getStringExtra("selftest")?.let { SelfTest.run(this, it) }
         setContent {
             EstanteTheme {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
