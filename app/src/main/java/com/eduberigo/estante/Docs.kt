@@ -92,6 +92,16 @@ class PdfDoc(file: File) : Doc {
 
     private val angles = java.util.concurrent.ConcurrentHashMap<Int, Float>()
 
+    /** Margens automáticas desta página (frações), ou null se não há o que cortar. */
+    suspend fun autoCropRect(index: Int): RectF? = mutex.withLock {
+        if (closed || index !in 0 until pageCount) return@withLock null
+        if (cropCache.containsKey(index)) return@withLock cropCache[index]
+        withContext(Dispatchers.IO) {
+            val page = renderer.openPage(index)
+            try { detectCrop(page).also { cropCache[index] = it } } finally { page.close() }
+        }
+    }
+
     override suspend fun render(index: Int, maxW: Int, maxH: Int, crop: Boolean, look: Look?, manual: RectF?): Bitmap? = mutex.withLock {
         if (closed || index !in 0 until pageCount || maxW <= 0 || maxH <= 0) return@withLock null
         withContext(Dispatchers.IO) {

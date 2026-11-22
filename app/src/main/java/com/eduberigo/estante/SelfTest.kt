@@ -57,9 +57,9 @@ object SelfTest {
                 Export.imagesToPdf(imgs, out)
                 Log.i(tag, "imagesToPdf ok bytes=${out.length()}")
                 val s = Setlist("t", "Teste Export", (pdfs + imgs).map { SetItem(it.absolutePath) })
-                val r = Export.binder(ctx, s)
+                val r = Export.binder(ctx, s, Flatten.Opts(true, true, false, true))
                 Log.i(tag, "binder ok ${r.files.map { it.absolutePath + " " + it.length() }} pulados=${r.skipped}")
-                val r2 = Export.separate(ctx, s)
+                val r2 = Export.separate(ctx, s, Flatten.Opts(true, true, true, false))
                 Log.i(tag, "separados ok ${r2.files.size} pulados=${r2.skipped}")
                 Log.i(tag, "txt ${Export.txt(s).length()}")
                 pdfs.firstOrNull()?.let { f ->
@@ -91,6 +91,15 @@ object SelfTest {
                     kotlinx.coroutines.delay(250); w++
                 }
                 Log.i(tag, "backup partituras: ${LibraryBackup.progress.value.result}")
+                pdfs.firstOrNull()?.let { f ->
+                    val o1 = File(ctx.cacheDir, "flat-vetor.pdf")
+                    Flatten.process(ctx, f, o1, Flatten.Opts(true, true, false, true))
+                    val o2 = File(ctx.cacheDir, "flat-imagem.pdf")
+                    AnnStore.save(ctx, f.absolutePath, AnnStore.load(ctx, f.absolutePath).copy(look = Look.LEGIVEL))
+                    Flatten.process(ctx, f, o2, Flatten.Opts(true, true, true, false))
+                    val links = com.tom_roush.pdfbox.pdmodel.PDDocument.load(o1).use { d -> d.pages.sumOf { it.annotations.size } }
+                    Log.i(tag, "flatten vetor bytes=${o1.length()} links=$links imagem bytes=${o2.length()} original=${f.length()}")
+                }
                 Log.i(tag, "FIM OK")
             } catch (e: Throwable) {
                 Log.e(tag, "FALHOU", e)

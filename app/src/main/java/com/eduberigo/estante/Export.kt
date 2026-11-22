@@ -151,8 +151,8 @@ object Export {
         }
     }
 
-    /** Um PDF por música: "01 - Nome.pdf". */
-    suspend fun separate(ctx: Context, s: Setlist): Result = withContext(Dispatchers.IO) {
+    /** Um PDF por música: "01 - Nome.pdf". [o] = o que gravar dentro dos arquivos (anotações, recortes, ajustes). */
+    suspend fun separate(ctx: Context, s: Setlist, o: Flatten.Opts): Result = withContext(Dispatchers.IO) {
         val dir = exportDir(s.name)
         val out = mutableListOf<File>()
         val skipped = mutableListOf<String>()
@@ -160,18 +160,12 @@ object Export {
             val src = File(it.path)
             val name = "%02d - %s".format(i + 1, it.label())
             try {
-                when (Fs.kindOf(src)) {
-                    Kind.PDF -> {
-                        val dst = unique(dir, name, "pdf")
-                        src.copyTo(dst)
-                        out.add(dst)
-                    }
-                    Kind.IMAGE -> {
-                        val dst = unique(dir, name, "pdf")
-                        newDoc().use { d -> addImagePage(d, src); d.save(dst) }
-                        out.add(dst)
-                    }
-                    else -> skipped.add(it.label())
+                if (Fs.kindOf(src) !in setOf(Kind.PDF, Kind.IMAGE)) {
+                    skipped.add(it.label())
+                } else {
+                    val dst = unique(dir, name, "pdf")
+                    Flatten.process(ctx, src, dst, o)
+                    out.add(dst)
                 }
             } catch (e: Throwable) {
                 skipped.add(it.label())
@@ -181,48 +175,54 @@ object Export {
     }
 
     /** Fichário: tudo num PDF só, com marcadores (índice) por música. */
-    suspend fun binder(ctx: Context, s: Setlist): Result = withContext(Dispatchers.IO) {
+    suspend fun binder(ctx: Context, s: Setlist, o: Flatten.Opts): Result = withContext(Dispatchers.IO) {
         val dir = exportDir(s.name)
         val dst = unique(dir, s.name, "pdf")
         val skipped = mutableListOf<String>()
         val opened = mutableListOf<PDDocument>()
+        val temps = mutableListOf<File>()
         val marks = mutableListOf<Pair<String, Int>>()
-        newDoc().use { doc ->
-            val merger = PDFMergerUtility()
-            s.items.forEachIndexed { i, it ->
-                val src = File(it.path)
-                val start = doc.numberOfPages
-                try {
-                    when (Fs.kindOf(src)) {
-                        Kind.PDF -> {
-                            val d = PDDocument.load(src, MemoryUsageSetting.setupTempFileOnly())
+        try {
+            newDoc().use { doc ->
+                val merger = PDFMergerUtility()
+                s.items.forEachIndexed { i, it ->
+                    val src = File(it.path)
+                    val start = doc.numberOfPages
+                    try {
+                        if (Fs.kindOf(src) !in setOf(Kind.PDF, Kind.IMAGE)) {
+                            skipped.add(it.label())
+                        } else {
+                            val tmp = File(ctx.cacheDir, "fichario-${System.nanoTime()}.pdf")
+                            temps.add(tmp)
+                            Flatten.process(ctx, src, tmp, o)
+                            val d = PDDocument.load(tmp, MemoryUsageSetting.setupTempFileOnly())
                             opened.add(d)
                             if (d.isEncrypted) d.setAllSecurityToBeRemoved(true)
                             merger.appendDocument(doc, d)
                         }
-                        Kind.IMAGE -> addImagePage(doc, src)
-                        else -> skipped.add(it.label())
+                    } catch (e: Throwable) {
+                        skipped.add(it.label())
                     }
-                } catch (e: Throwable) {
-                    skipped.add(it.label())
+                    if (doc.numberOfPages > start) marks.add("${i + 1}. ${it.label()}" to start)
                 }
-                if (doc.numberOfPages > start) marks.add("${i + 1}. ${it.label()}" to start)
+                // Índice só com as músicas (descarta marcadores que vieram dos arquivos originais).
+                val outline = PDDocumentOutline()
+                for ((title, page) in marks) {
+                    val item = PDOutlineItem()
+                    item.title = title
+                    val dest = PDPageFitDestination()
+                    dest.page = doc.getPage(page)
+                    item.destination = dest
+                    outline.addLast(item)
+                }
+                outline.openNode()
+                doc.documentCatalog.documentOutline = outline
+                doc.save(dst)
             }
-            // Índice só com as músicas (descarta marcadores que vieram dos arquivos originais).
-            val outline = PDDocumentOutline()
-            for ((title, page) in marks) {
-                val item = PDOutlineItem()
-                item.title = title
-                val dest = PDPageFitDestination()
-                dest.page = doc.getPage(page)
-                item.destination = dest
-                outline.addLast(item)
-            }
-            outline.openNode()
-            doc.documentCatalog.documentOutline = outline
-            doc.save(dst)
+        } finally {
+            opened.forEach { try { it.close() } catch (_: Throwable) {} }
+            temps.forEach { it.delete() }
         }
-        opened.forEach { try { it.close() } catch (_: Throwable) {} }
         Result(listOf(dst), skipped)
     }
 

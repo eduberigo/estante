@@ -326,6 +326,11 @@ fun ExportDialog(s: Setlist, onDismiss: () -> Unit) {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     var busy by remember { mutableStateOf<String?>(null) }
     var result by remember { mutableStateOf<Export.Result?>(null) }
+    val autoCrop = remember { Prefs(ctx).autoCrop }
+    var withNotes by remember { mutableStateOf(true) }
+    var withCrops by remember { mutableStateOf(true) }
+    var withLook by remember { mutableStateOf(false) }
+    val opts = Flatten.Opts(withNotes, withCrops, withLook, autoCrop)
     Dialog(onDismissRequest = { if (busy == null) onDismiss() }) {
         Surface(shape = RoundedCornerShape(16.dp)) {
             Column(Modifier.padding(vertical = 8.dp).fillMaxWidth()) {
@@ -359,18 +364,26 @@ fun ExportDialog(s: Setlist, onDismiss: () -> Unit) {
                         }
                     }
                     else -> {
-                        HorizontalDivider()
+                        Text(
+                            "Gravar dentro dos PDFs (para abrir em qualquer leitor):",
+                            style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier.padding(horizontal = 20.dp),
+                        )
+                        CheckRow("Anotações, âncoras e saltos (saltos viram links)", withNotes) { withNotes = it }
+                        CheckRow("Recortes${if (autoCrop) " (manuais e automáticos)" else " manuais"}", withCrops) { withCrops = it }
+                        CheckRow("Ajustes de imagem (fundo, preto, nitidez; a página vira imagem)", withLook) { withLook = it }
+                        HorizontalDivider(Modifier.padding(top = 6.dp))
                         ActionRow("PDFs separados (01 - música.pdf, 02 - …)") {
                             busy = "Gerando PDFs…"
                             scope.launch {
-                                result = try { Export.separate(ctx, s) } catch (e: Throwable) { Export.Result(emptyList(), listOf(e.message ?: "erro")) }
+                                result = try { Export.separate(ctx, s, opts) } catch (e: Throwable) { Export.Result(emptyList(), listOf(e.message ?: "erro")) }
                                 busy = null
                             }
                         }
                         ActionRow("Fichário: tudo num PDF só, com índice") {
                             busy = "Montando o fichário…"
                             scope.launch {
-                                result = try { Export.binder(ctx, s) } catch (e: Throwable) { Export.Result(emptyList(), listOf(e.message ?: "erro")) }
+                                result = try { Export.binder(ctx, s, opts) } catch (e: Throwable) { Export.Result(emptyList(), listOf(e.message ?: "erro")) }
                                 busy = null
                             }
                         }
@@ -387,5 +400,16 @@ fun ExportDialog(s: Setlist, onDismiss: () -> Unit) {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun CheckRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable { onChange(!checked) }.padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        androidx.compose.material3.Checkbox(checked = checked, onCheckedChange = onChange)
+        Text(label, style = MaterialTheme.typography.bodyMedium)
     }
 }
