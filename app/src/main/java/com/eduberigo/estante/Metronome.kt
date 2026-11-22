@@ -20,6 +20,8 @@ class Metronome {
     /** Tempo atual dentro do compasso (0 = primeiro). -1 = parado. */
     val beat = MutableStateFlow(-1)
     val running = MutableStateFlow(false)
+    /** Conta cada batida (para o indicador piscar). */
+    val tick = MutableStateFlow(0L)
 
     private val sr = 44100
     private var worker: Thread? = null
@@ -68,6 +70,7 @@ class Metronome {
                     val b = beats.coerceAtLeast(1)
                     val pos = i % b
                     beat.value = pos
+                    tick.value = tick.value + 1
                     val len = (sr * 60.0 / bpm.coerceIn(20, 400)).toInt()
                     val buf = ShortArray(len)
                     if (sound) {

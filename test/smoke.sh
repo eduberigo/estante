@@ -40,7 +40,10 @@ adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb pull /sdcard/ui
 adb shell am force-stop $PKG
 adb shell monkey -p $PKG -c android.intent.category.LAUNCHER 1 >/dev/null; sleep 8
 dump() { adb shell uiautomator dump /sdcard/u.xml >/dev/null 2>&1; adb pull /sdcard/u.xml out/ui-tmp.xml >/dev/null 2>&1; }
+W0=$(adb shell wm size | grep -o '[0-9]*x[0-9]*' | tail -1 | cut -dx -f1); H0=$(adb shell wm size | grep -o '[0-9]*x[0-9]*' | tail -1 | cut -dx -f2)
+adb shell input swipe $((W0/5)) $((H0*4/5)) $((W0/5)) $((H0/4)) 400; sleep 2
 dump; python3 test/tap.py "Artistas" > out/browse.txt; sleep 4; dump; cp out/ui-tmp.xml out/ui-artistas.xml
+python3 test/tap.py "Tom Jobim" >> out/browse.txt; sleep 3; dump; cp out/ui-tmp.xml out/ui-artista1.xml
 
 # 3b) Leitor + anotação pela interface
 dump() { adb shell uiautomator dump /sdcard/u.xml >/dev/null 2>&1; adb pull /sdcard/u.xml out/ui-tmp.xml >/dev/null 2>&1; }
@@ -82,7 +85,7 @@ for f in out/install.txt out/atividade-1.txt out/atividade-2.txt; do echo "=====
 for f in out/ui1.xml out/ui2.xml out/ui.xml; do echo "===== TEXTOS $f"; grep -o 'text="[^"]*"' "$f" | grep -v 'text=""' | head -60; grep -o 'content-desc="[^"]*"' "$f" | grep -v '=""' | head -30; done
 echo "===== LEITOR"; grep -o 'text="[^"]*"' out/ui-leitor.xml | grep -v 'text=""' | head -30
 echo "===== ANOTACAO"; cat out/anot.txt; grep -o 'text="[^"]*"' out/ui-depois.xml | grep -v 'text=""' | head -30
-echo "===== BROWSE"; cat out/browse.txt; grep -o 'text="[^"]*"' out/ui-artistas.xml | grep -v 'text=""' | head -20
+echo "===== BROWSE"; cat out/browse.txt; grep -o 'text="[^"]*"' out/ui-artistas.xml | grep -v 'text=""' | head -20; echo "--- artista"; grep -o 'text="[^"]*"' out/ui-artista1.xml | grep -v 'text=""' | head -12
 for f in out/ui-metro.xml out/ui-imagem.xml out/ui-recorte.xml; do echo "===== $f"; grep -o 'text="[^"]*"' $f | grep -v 'text=""' | head -25; done
 echo "===== AUTOTESTE"; grep -E "ESTANTE_SELFTEST" out/logcat-completo.txt; grep -E "W Estante" -A 4 out/logcat-completo.txt | head -40
 echo "===== ERROS"; grep -E "FATAL|AndroidRuntime|E/.*estante" -A 25 out/logcat-completo.txt | head -150

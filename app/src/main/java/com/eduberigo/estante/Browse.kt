@@ -107,23 +107,25 @@ fun BrowseContent(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
-            LazyColumn(Modifier.fillMaxSize()) {
-                items(list.size, key = { list[it].path }) { i ->
-                    val it = list[i]
-                    val e = Entry(File(it.path), Kind.PDF, 0L, 0L)
-                    val extra = listOfNotNull(
-                        it.info.artist?.takeIf { kind != BrowseKind.ARTIST },
-                        it.info.key?.let { k -> "tom $k" },
-                        it.info.bpm?.let { b -> "$b bpm" },
+            val byPath = remember(list) { list.associateBy { it.path } }
+            val entries = remember(list) { list.map { Fs.entry(File(it.path)) } }
+            EntryRows(
+                state = state,
+                list = entries,
+                sub = { e ->
+                    val inf = byPath[e.path]?.info
+                    listOfNotNull(
+                        inf?.artist?.takeIf { kind != BrowseKind.ARTIST },
+                        inf?.key?.let { k -> "tom $k" },
+                        inf?.bpm?.let { b -> "$b bpm" },
                         state.shortFolder(e.file),
                     ).joinToString(" • ")
-                    ListItemRow(
-                        e, extra, state.isSel(e.path), state.isFav(e.path),
-                        { onClick(Fs.entry(e.file)) }, { onLong(Fs.entry(e.file)) }, state.thumbSize,
-                        title = it.info.title,
-                    )
-                }
-            }
+                },
+                title = { e -> byPath[e.path]?.info?.title ?: e.title },
+                highlight = if (f.isEmpty()) emptyList() else f.split(' ').filter { it.isNotBlank() },
+                onClick = onClick,
+                onLong = onLong,
+            )
         } else {
             // Lista de grupos (artistas, gêneros, tons).
             val groups = remember(all, kind, f) {

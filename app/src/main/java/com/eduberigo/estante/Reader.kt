@@ -1012,27 +1012,43 @@ private fun nowText(): String = clockFmt.format(java.util.Date())
 private fun MetroIndicator(metro: Metronome, modifier: Modifier) {
     val beat by metro.beat.collectAsState()
     val running by metro.running.collectAsState()
+    val tick by metro.tick.collectAsState()
+    var flash by remember { mutableStateOf(false) }
+    // Pisca a cada batida: acende e apaga antes da próxima.
+    LaunchedEffect(tick) {
+        if (!running) return@LaunchedEffect
+        flash = true
+        kotlinx.coroutines.delay((30000L / metro.bpm.coerceAtLeast(30)).coerceAtMost(180L))
+        flash = false
+    }
     if (!running) return
+    val first = beat == 0
     Box(
         modifier
             .displayCutoutPadding()
             .statusBarsPadding()
             .padding(10.dp)
-            .size(34.dp)
+            .size(36.dp)
             .clickable { metro.stop() },
         contentAlignment = Alignment.Center,
     ) {
-        val first = beat == 0
         Box(
             Modifier
-                .size(if (first) 26.dp else 18.dp)
+                .size(if (first) 30.dp else 24.dp)
                 .clip(CircleShape)
-                .background(if (first) Color(0xFFFF9800) else Color.White.copy(alpha = 0.85f))
+                .background(
+                    when {
+                        flash && first -> Color(0xFFFF9800)
+                        flash -> Color.White
+                        else -> Color.White.copy(alpha = 0.12f)
+                    }
+                )
+                .border(1.dp, Color.White.copy(alpha = 0.4f), CircleShape)
         )
         if (beat >= 0) {
             Text(
                 (beat + 1).toString(),
-                color = Color.Black,
+                color = if (flash) Color.Black else Color.White.copy(alpha = 0.6f),
                 style = MaterialTheme.typography.labelSmall,
             )
         }

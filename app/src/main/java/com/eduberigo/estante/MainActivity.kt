@@ -111,6 +111,16 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("grid", true)
         set(v) { sp.edit().putBoolean("grid", v).apply() }
 
+    /** 0 = grade de miniaturas, 1 = lista, 2 = lista lado a lado (colunas). */
+    var viewMode: Int
+        get() = sp.getInt("viewMode", if (grid) 0 else 1)
+        set(v) { sp.edit().putInt("viewMode", v).apply() }
+
+    /** Separar resultados em "memória interna" e "cartão". */
+    var groupByVolume: Boolean
+        get() = sp.getBoolean("groupByVolume", false)
+        set(v) { sp.edit().putBoolean("groupByVolume", v).apply() }
+
     /** 0 pequenas, 1 médias, 2 grandes, 3 enormes. */
     var thumbSize: Int
         get() = sp.getInt("thumbSize", 1)

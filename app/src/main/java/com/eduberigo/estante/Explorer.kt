@@ -119,11 +119,11 @@ import kotlin.math.abs
 
 internal val FavColor = Color(0xFFFFB300)
 
-private val ThumbNames = listOf("Pequenas", "Médias", "Grandes", "Enormes")
-private val GridMin = listOf(90, 120, 170, 240)
-private val GridPx = listOf(240, 320, 460, 640)
-private val ListW = listOf(36, 44, 64, 96)
-private val ListPx = listOf(100, 130, 200, 300)
+private val ThumbNames = listOf("Pequenas", "Médias", "Grandes", "Enormes", "Gigantes", "Máximas")
+private val GridMin = listOf(90, 120, 170, 240, 330, 450)
+private val GridPx = listOf(240, 320, 460, 640, 880, 1200)
+private val ListW = listOf(36, 44, 64, 96, 128, 170)
+private val ListPx = listOf(100, 130, 200, 300, 400, 520)
 
 /** Estado do explorador. Fica vivo enquanto o leitor está aberto, para voltar ao mesmo ponto. */
 class ExplorerState(private val prefs: Prefs) {
@@ -135,8 +135,17 @@ class ExplorerState(private val prefs: Prefs) {
     var entries by mutableStateOf<List<Entry>>(emptyList())
     var loading by mutableStateOf(false)
     var selected by mutableStateOf<Entry?>(null)
-    var grid by mutableStateOf(prefs.grid)
+    var viewMode by mutableIntStateOf(prefs.viewMode)
         private set
+    val grid: Boolean get() = viewMode == 0
+
+    var groupByVolume by mutableStateOf(prefs.groupByVolume)
+        private set
+
+    fun toggleGroupByVolume() {
+        groupByVolume = !groupByVolume
+        prefs.groupByVolume = groupByVolume
+    }
 
     var pinned by mutableStateOf(prefs.pinned)
         private set
@@ -147,7 +156,7 @@ class ExplorerState(private val prefs: Prefs) {
         private set
 
     fun updateThumbSize(v: Int) {
-        thumbSize = v.coerceIn(0, 3)
+        thumbSize = v.coerceIn(0, ThumbNames.lastIndex)
         prefs.thumbSize = thumbSize
     }
 
@@ -267,8 +276,8 @@ class ExplorerState(private val prefs: Prefs) {
     }
 
     fun toggleGrid() {
-        grid = !grid
-        prefs.grid = grid
+        viewMode = (viewMode + 1) % 3
+        prefs.viewMode = viewMode
     }
 
     fun updateAutoCrop(v: Boolean) {
@@ -598,10 +607,10 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                         }
                         if (!state.searching && state.inFolder) {
                             IconButton(onClick = { state.toggleGrid() }) {
-                                if (state.grid) {
-                                    Icon(Icons.AutoMirrored.Filled.List, "Ver em lista")
-                                } else {
-                                    Icon(painterResource(R.drawable.ic_grid), "Ver em grade")
+                                when (state.viewMode) {
+                                    0 -> Icon(Icons.AutoMirrored.Filled.List, "Ver em lista")
+                                    1 -> Icon(painterResource(R.drawable.ic_columns), "Ver lista lado a lado")
+                                    else -> Icon(painterResource(R.drawable.ic_grid), "Ver em grade")
                                 }
                             }
                         }
@@ -1367,9 +1376,18 @@ private fun FolderContent(state: ExplorerState, onClick: (Entry) -> Unit, onLong
                 state.pendingFocus = null
             }
         }
-        LazyColumn(state = ls, modifier = Modifier.fillMaxSize()) {
-            items(entries, key = { it.path }) { e ->
-                ListItemRow(e, null, state.isSel(e.path), state.isFav(e.path), { onClick(e) }, { onLong(e) }, state.thumbSize)
+        if (state.viewMode == 2) {
+            LazyVerticalGrid(columns = GridCells.Adaptive(ColumnWidth), modifier = Modifier.fillMaxSize()) {
+                items(entries.size, key = { entries[it].path }) { i ->
+                    val e = entries[i]
+                    ListItemRow(e, null, state.isSel(e.path), state.isFav(e.path), { onClick(e) }, { onLong(e) }, state.thumbSize)
+                }
+            }
+        } else {
+            LazyColumn(state = ls, modifier = Modifier.fillMaxSize()) {
+                items(entries, key = { it.path }) { e ->
+                    ListItemRow(e, null, state.isSel(e.path), state.isFav(e.path), { onClick(e) }, { onLong(e) }, state.thumbSize)
+                }
             }
         }
     }
@@ -1382,15 +1400,15 @@ private fun ResultsList(state: ExplorerState, onClick: (Entry) -> Unit, onLong: 
         return
     }
     val tokens = remember(state.query) { Fs.norm(state.query).split(' ', '\t').filter { it.isNotBlank() } }
-    LazyColumn(Modifier.fillMaxSize()) {
-        items(state.results, key = { it.path }) { e ->
-            ListItemRow(
-                e, state.shortFolder(e.file), state.isSel(e.path), state.isFav(e.path),
-                { onClick(e) }, { onLong(e) }, state.thumbSize,
-                highlight = tokens,
-            )
-        }
-    }
+    EntryRows(
+        state = state,
+        list = state.results,
+        sub = { state.shortFolder(it.file) },
+        title = { it.title },
+        highlight = tokens,
+        onClick = onClick,
+        onLong = onLong,
+    )
 }
 
 /** Lista de buscas recentes (aparece com o campo de busca vazio). */
@@ -1971,6 +1989,70 @@ private fun PasteBar(clip: ExplorerState.Clip, canPaste: Boolean, here: String, 
                 androidx.compose.material3.TextButton(onClick = onCancel) { Text("Cancelar") }
                 Button(enabled = canPaste, onClick = onPaste) {
                     Text("Colar em \"$here\"", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+    }
+}
+
+internal val ColumnWidth = 360.dp
+
+/**
+ * Lista de resultados (busca, navegação por artista…): uma coluna ou lado a lado,
+ * opcionalmente separada em "Memória interna" e "Cartão".
+ */
+@Composable
+internal fun EntryRows(
+    state: ExplorerState,
+    list: List<Entry>,
+    sub: (Entry) -> String?,
+    title: (Entry) -> String,
+    highlight: List<String>,
+    onClick: (Entry) -> Unit,
+    onLong: (Entry) -> Unit,
+) {
+    val ctx = LocalContext.current
+    val vols = remember { Fs.volumes(ctx) }
+    val groups: List<Pair<String?, List<Entry>>> = remember(list, state.groupByVolume) {
+        if (!state.groupByVolume) {
+            listOf(null to list)
+        } else {
+            val byVol = list.groupBy { Fs.volumeOf(it.file, vols) }
+            vols.mapNotNull { v -> byVol[v]?.let { v.label to it } } +
+                listOfNotNull(byVol[null]?.let { "Outros locais" to it })
+        }
+    }
+    Column(Modifier.fillMaxSize()) {
+        if (vols.size > 1 || state.groupByVolume) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                androidx.compose.material3.FilterChip(
+                    selected = state.groupByVolume,
+                    onClick = { state.toggleGroupByVolume() },
+                    label = { Text("Separar por local (memória / cartão)") },
+                )
+            }
+        }
+        LazyVerticalGrid(
+            columns = if (state.viewMode == 2) GridCells.Adaptive(ColumnWidth) else GridCells.Fixed(1),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            groups.forEach { (label, items) ->
+                if (label != null) {
+                    item(span = { GridItemSpan(maxLineSpan) }, key = "h:$label") {
+                        SectionHeader("$label (${items.size})")
+                    }
+                }
+                items(items.size, key = { (label ?: "") + "|" + items[it].path }) { i ->
+                    val e = items[i]
+                    ListItemRow(
+                        e, sub(e), state.isSel(e.path), state.isFav(e.path),
+                        { onClick(e) }, { onLong(e) }, state.thumbSize,
+                        title = title(e),
+                        highlight = highlight,
+                    )
                 }
             }
         }
