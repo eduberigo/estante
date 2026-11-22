@@ -351,22 +351,22 @@ fun ReaderScreen(
         if (!showBars && tool == null && anchors.isNotEmpty()) {
             Row(
                 Modifier
-                    .align(Alignment.BottomStart)
+                    .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
-                    .padding(8.dp)
+                    .padding(bottom = 12.dp, start = 12.dp, end = 12.dp)
                     .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
             ) {
                 anchors.forEach { (pg, a) ->
                     Text(
                         a.label,
-                        color = Color.White,
-                        style = MaterialTheme.typography.labelLarge,
+                        color = Color.White.copy(alpha = 0.95f),
+                        style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(AnnDraw.AnchorColor.copy(alpha = if (pg == pager.currentPage) 0.85f else 0.45f))
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(AnnDraw.AnchorColor.copy(alpha = if (pg == pager.currentPage) 0.75f else 0.5f))
                             .clickable { goTo(pg) }
-                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                            .padding(horizontal = 18.dp, vertical = 9.dp),
                     )
                 }
             }
