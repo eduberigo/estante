@@ -36,7 +36,9 @@ interface Doc {
     fun shownRect(index: Int): RectF = RectF(0f, 0f, 1f, 1f)
     /** crop = recorte automático das margens brancas (só na tela; o arquivo não muda). */
     suspend fun render(
-        index: Int, maxW: Int, maxH: Int, crop: Boolean = false, enhance: Boolean = false,
+        index: Int, maxW: Int, maxH: Int, crop: Boolean = false,
+        /** Ajustes de imagem (endireitar, fundo, preto, nitidez); null = como está no arquivo. */
+        look: Look? = null,
         /** Recorte manual (frações da página); tem prioridade sobre o automático. */
         manual: RectF? = null,
     ): Bitmap?
@@ -88,26 +90,16 @@ class PdfDoc(file: File) : Doc {
         return r
     }
 
-    override suspend fun render(index: Int, maxW: Int, maxH: Int, crop: Boolean, enhance: Boolean, manual: RectF?): Bitmap? = mutex.withLock {
+    private val angles = java.util.concurrent.ConcurrentHashMap<Int, Float>()
+
+    override suspend fun render(index: Int, maxW: Int, maxH: Int, crop: Boolean, look: Look?, manual: RectF?): Bitmap? = mutex.withLock {
         if (closed || index !in 0 until pageCount || maxW <= 0 || maxH <= 0) return@withLock null
         withContext(Dispatchers.IO) {
             try {
                 val page = renderer.openPage(index)
-                try {
+                val bmp = try {
                     val pw = page.width.toFloat()
                     val ph = page.height.toFloat()
-                    if (enhance && manual == null) {
-                        // Página inteira em resolução maior; endireita, realça e recorta depois.
-                        var s0 = minOf(maxW / pw, maxH / ph) * 1.5f
-                        val maxPixels = 14_000_000f
-                        if (pw * ph * s0 * s0 > maxPixels) s0 = kotlin.math.sqrt(maxPixels / (pw * ph))
-                        val full = Bitmap.createBitmap((pw * s0).toInt().coerceAtLeast(1), (ph * s0).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
-                        full.eraseColor(Color.WHITE)
-                        page.render(full, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                        val (eb, er) = Enhance.processR(full, crop)
-                        shown[index] = er
-                        return@withContext eb
-                    }
                     val r = if (manual != null) manual else if (crop) {
                         if (cropCache.containsKey(index)) cropCache[index] else detectCrop(page).also { cropCache[index] = it }
                     } else {
@@ -121,18 +113,24 @@ class PdfDoc(file: File) : Doc {
                     val s = minOf(maxW / cw, maxH / ch)
                     val w = (cw * s).toInt().coerceAtLeast(1)
                     val h = (ch * s).toInt().coerceAtLeast(1)
-                    val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                    bmp.eraseColor(Color.WHITE)
+                    val b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                    b.eraseColor(Color.WHITE)
                     val m = Matrix()
                     m.postScale(s, s)
                     m.postTranslate(-cx * s, -cy * s)
-                    page.render(bmp, null, m, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                    if (enhance) Enhance.levels(bmp) else bmp
+                    page.render(b, null, m, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    b
                 } finally {
                     page.close()
                 }
+                if (look == null) {
+                    bmp
+                } else {
+                    val a = if (look.deskew) angles[index] ?: Enhance.skewAngle(bmp).also { angles[index] = it } else 0f
+                    Enhance.apply(bmp, look, a)
+                }
             } catch (e: Throwable) {
-                android.util.Log.w("Estante", "render falhou p=$index crop=$crop enhance=$enhance", e)
+                android.util.Log.w("Estante", "render falhou p=$index crop=$crop look=$look", e)
                 null
             }
         }
@@ -155,34 +153,23 @@ class ImageDoc(private val file: File) : Doc {
     override val pageCount: Int = 1
     @Volatile private var shown = RectF(0f, 0f, 1f, 1f)
     override fun shownRect(index: Int): RectF = shown
-    override suspend fun render(index: Int, maxW: Int, maxH: Int, crop: Boolean, enhance: Boolean, manual: RectF?): Bitmap? =
+    override suspend fun render(index: Int, maxW: Int, maxH: Int, crop: Boolean, look: Look?, manual: RectF?): Bitmap? =
         withContext(Dispatchers.IO) {
             try {
-                if (manual != null) {
-                    val big = decodeImage(file, maxW * 2, maxH * 2)
-                    val x = (manual.left * big.width).toInt().coerceIn(0, big.width - 1)
-                    val y = (manual.top * big.height).toInt().coerceIn(0, big.height - 1)
-                    val w = (manual.width() * big.width).toInt().coerceIn(1, big.width - x)
-                    val h = (manual.height() * big.height).toInt().coerceIn(1, big.height - y)
-                    shown = RectF(manual)
-                    val c = Bitmap.createBitmap(big, x, y, w, h)
-                    return@withContext if (enhance) Enhance.levels(c) else c
+                val cut = manual != null || crop
+                val big = decodeImage(file, if (cut) maxW * 2 else maxW, if (cut) maxH * 2 else maxH)
+                val r = manual ?: if (crop) Crop.detect(big) else null
+                shown = r?.let { RectF(it) } ?: RectF(0f, 0f, 1f, 1f)
+                val b = if (r == null) {
+                    big
+                } else {
+                    val x = (r.left * big.width).toInt().coerceIn(0, big.width - 1)
+                    val y = (r.top * big.height).toInt().coerceIn(0, big.height - 1)
+                    val w = (r.width() * big.width).toInt().coerceIn(1, big.width - x)
+                    val h = (r.height() * big.height).toInt().coerceIn(1, big.height - y)
+                    Bitmap.createBitmap(big, x, y, w, h)
                 }
-                if (enhance) {
-                    val (eb, er) = Enhance.processR(decodeImage(file, maxW * 2, maxH * 2), crop)
-                    shown = er
-                    return@withContext eb
-                }
-                shown = RectF(0f, 0f, 1f, 1f)
-                if (!crop) return@withContext decodeImage(file, maxW, maxH)
-                val big = decodeImage(file, maxW * 2, maxH * 2)
-                val r = Crop.detect(big) ?: return@withContext big
-                shown = RectF(r)
-                val x = (r.left * big.width).toInt()
-                val y = (r.top * big.height).toInt()
-                val w = (r.width() * big.width).toInt().coerceIn(1, big.width - x)
-                val h = (r.height() * big.height).toInt().coerceIn(1, big.height - y)
-                Bitmap.createBitmap(big, x, y, w, h)
+                if (look == null) b else Enhance.apply(b, look)
             } catch (e: Throwable) {
                 null
             }
@@ -196,10 +183,10 @@ class MultiImageDoc(private val files: List<File>, override val startPage: Int) 
     override val pageFiles: List<File> = files
     private val shown = java.util.concurrent.ConcurrentHashMap<Int, RectF>()
     override fun shownRect(index: Int): RectF = shown[index] ?: RectF(0f, 0f, 1f, 1f)
-    override suspend fun render(index: Int, maxW: Int, maxH: Int, crop: Boolean, enhance: Boolean, manual: RectF?): Bitmap? {
+    override suspend fun render(index: Int, maxW: Int, maxH: Int, crop: Boolean, look: Look?, manual: RectF?): Bitmap? {
         if (index !in files.indices) return null
         val d = ImageDoc(files[index])
-        val b = d.render(0, maxW, maxH, crop, enhance, manual)
+        val b = d.render(0, maxW, maxH, crop, look, manual)
         shown[index] = d.shownRect(0)
         return b
     }

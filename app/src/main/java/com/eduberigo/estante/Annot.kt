@@ -45,9 +45,11 @@ data class FileNotes(
     /** Metrônomo desta música. */
     val bpm: Int? = null,
     val beats: Int? = null,
+    /** Ajustes de imagem desta partitura (null = padrão: só endireitar). */
+    val look: Look? = null,
 ) {
     fun isEmpty() = pages.values.all { it.isEmpty() } && anchors.isEmpty() && jumps.isEmpty() &&
-        crops.isEmpty() && bpm == null && beats == null
+        crops.isEmpty() && bpm == null && beats == null && look == null
 
     fun cropFor(page: Int): android.graphics.RectF? =
         (crops[page] ?: crops[-1])?.takeIf { it.size == 4 }?.let { android.graphics.RectF(it[0], it[1], it[2], it[3]) }
@@ -144,6 +146,12 @@ object AnnStore {
             pages, anchors, jumps, crops,
             if (o.has("bpm")) o.getInt("bpm") else null,
             if (o.has("beats")) o.getInt("beats") else null,
+            o.optJSONObject("look")?.let { l ->
+                Look(
+                    l.optBoolean("d", true), l.optDouble("p", 0.0).toFloat(),
+                    l.optDouble("i", 0.0).toFloat(), l.optDouble("s", 0.0).toFloat(),
+                )
+            },
         )
     }
 
@@ -165,6 +173,12 @@ object AnnStore {
         val root = JSONObject()
         if (n.bpm != null) root.put("bpm", n.bpm)
         if (n.beats != null) root.put("beats", n.beats)
+        n.look?.let { l ->
+            root.put(
+                "look",
+                JSONObject().put("d", l.deskew).put("p", l.paper.toDouble()).put("i", l.ink.toDouble()).put("s", l.sharp.toDouble()),
+            )
+        }
         return root
             .put("crops", co)
             .put("path", path)

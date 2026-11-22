@@ -201,8 +201,6 @@ fun App(hasPermission: Boolean, requestPermission: () -> Unit) {
                 lib = lib,
                 autoCrop = explorer.autoCrop,
                 onAutoCrop = { explorer.updateAutoCrop(it) },
-                enhance = explorer.enhance,
-                onEnhance = { explorer.updateEnhance(it) },
                 onClose = { reading = null },
             )
         }

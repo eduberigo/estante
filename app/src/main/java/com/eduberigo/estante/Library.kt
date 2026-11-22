@@ -213,6 +213,12 @@ object Meta {
         "forro", "forró", "sertanejo", "tango", "bolero", "valsa", "waltz", "ballad",
     )
 
+    /** BPM escrito no nome do arquivo (ex.: "... - 95.pdf" ou "95 bpm"), se houver. */
+    fun bpmOf(name: String): Int? =
+        name.split(" - ").map { it.trim() }.firstNotNullOfOrNull { p ->
+            if (bpmRe.matches(p)) p.filter(Char::isDigit).toIntOrNull()?.takeIf { it in 30..300 } else null
+        }
+
     /** Frequência de cada trecho na biblioteca (preenchida a partir do índice de busca). */
     @Volatile var partFreq: Map<String, Int> = emptyMap()
 

@@ -154,14 +154,6 @@ class ExplorerState(private val prefs: Prefs) {
     var autoCrop by mutableStateOf(prefs.autoCrop)
         private set
 
-    var enhance by mutableStateOf(prefs.enhance)
-        private set
-
-    fun updateEnhance(v: Boolean) {
-        enhance = v
-        prefs.enhance = v
-    }
-
     var textScale by mutableFloatStateOf(prefs.textScale)
         private set
 
@@ -614,10 +606,6 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                                         leadingIcon = { Icon(painterResource(R.drawable.ic_crop), null) },
                                         onClick = { menuOpen = false; state.updateAutoCrop(!state.autoCrop) },
                                     )
-                                    DropdownMenuItem(
-                                        text = { Text(if (state.enhance) "Modo legível: ligado" else "Modo legível: desligado") },
-                                        onClick = { menuOpen = false; state.updateEnhance(!state.enhance) },
-                                    )
                                     HorizontalDivider()
                                     Row(
                                         Modifier.padding(horizontal = 12.dp),
@@ -780,7 +768,6 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                         PreviewPane(
                             entry = sel,
                             crop = state.autoCrop,
-                            enhance = state.enhance,
                             favorite = sel != null && state.isFav(sel.path),
                             onToggleFav = { e -> state.toggleFav(e.path) },
                             onAddToSetlist = { e -> addToSetlist = e.path },
@@ -812,7 +799,6 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                     PreviewPane(
                         entry = e,
                         crop = state.autoCrop,
-                            enhance = state.enhance,
                         favorite = state.isFav(e.path),
                         onToggleFav = { x -> state.toggleFav(x.path) },
                         onAddToSetlist = { x -> previewEntry = null; addToSetlist = x.path },
@@ -831,7 +817,10 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
         }
         if (backup) BackupDialog(state, volumes) { backup = false }
         prepare?.let { ps ->
-            PrepareFilesDialog(ps, volumes, lib, state) { prepare = null; state.selection = emptySet() }
+            PrepareFilesDialog(
+                ps, volumes, lib, state.autoCrop,
+                onRelink = { state.relink(it); state.reloadTick++ },
+            ) { prepare = null; state.selection = emptySet() }
         }
         confirmDelete?.let { ps ->
             androidx.compose.material3.AlertDialog(
@@ -1001,7 +990,7 @@ private fun ActionsDialog(
                     if (i < state.pinned.lastIndex) ActionRow("Mover para depois") { state.movePin(e.path, 1); onDismiss() }
                 }
                 if (onAddToSetlist != null) ActionRow("Adicionar a setlist…") { onAddToSetlist() }
-                if (onPrepare != null) ActionRow("Aplicar modo legível ao arquivo…") { onPrepare() }
+                if (onPrepare != null) ActionRow("Gravar ajustes de imagem no arquivo (modo legível)…") { onPrepare() }
                 if (onShowFolder != null) ActionRow("Mostrar na pasta") { onShowFolder() }
             }
         }
@@ -1600,7 +1589,6 @@ internal fun KindVisual(e: Entry, thumbW: Int, modifier: Modifier, iconSize: Int
 fun PreviewPane(
     entry: Entry?,
     crop: Boolean,
-    enhance: Boolean = false,
     favorite: Boolean,
     onToggleFav: (Entry) -> Unit,
     onAddToSetlist: (Entry) -> Unit,
@@ -1703,8 +1691,13 @@ fun PreviewPane(
             val h = constraints.maxHeight
             when {
                 doc != null -> {
-                    val bmp by produceState<Bitmap?>(null, doc, page, w, h, crop, enhance) {
-                        value = doc.render(page, (w * 1.5f).toInt(), (h * 1.5f).toInt(), crop, enhance)
+                    val ctxP = LocalContext.current
+                    val bmp by produceState<Bitmap?>(null, doc, page, w, h, crop) {
+                        // Ajustes de imagem e recorte manual salvos para esta partitura (ou desta imagem da pasta).
+                        val src = doc.pageFiles?.getOrNull(page)?.absolutePath ?: entry.path
+                        val pg = if (doc.pageFiles != null) 0 else page
+                        val nt = withContext(Dispatchers.IO) { AnnStore.load(ctxP, src) }
+                        value = doc.render(page, (w * 1.5f).toInt(), (h * 1.5f).toInt(), crop, nt.look ?: Look(), nt.cropFor(pg))
                     }
                     val b = bmp
                     if (b != null) {

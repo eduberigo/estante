@@ -29,10 +29,10 @@ object SelfTest {
                 }
                 pdfs.firstOrNull()?.let { f ->
                     val d = openDoc(f)!!
-                    val b = d.render(0, 800, 1200, true, true)
+                    val b = d.render(0, 800, 1200, true, Look.LEGIVEL)
                     Log.i(tag, "legivel ${b?.width}x${b?.height}")
                     imgs.firstOrNull()?.let { im ->
-                        val e2 = openDoc(im)!!.render(0, 800, 1200, true, true)
+                        val e2 = openDoc(im)!!.render(0, 800, 1200, true, Look(true, 0.5f, -0.6f, -0.5f))
                         Log.i(tag, "legivel imagem ${e2?.width}x${e2?.height}")
                     }
                     d.close()
@@ -45,12 +45,12 @@ object SelfTest {
                 }
                 pdfs.firstOrNull()?.let { f ->
                     val o = File(ctx.cacheDir, "legivel.pdf")
-                    Export.enhanceFile(f, o, true) { _, _ -> }
+                    Export.enhanceFile(f, o, true, Look.LEGIVEL, null) { _, _ -> }
                     Log.i(tag, "arquivo legivel pdf bytes=${o.length()}")
                 }
                 imgs.firstOrNull { it.name.startsWith("torta") }?.let { f ->
                     val o = File(ctx.cacheDir, "legivel.jpg")
-                    Export.enhanceFile(f, o, true) { _, _ -> }
+                    Export.enhanceFile(f, o, true, Look.LEGIVEL, null) { _, _ -> }
                     Log.i(tag, "arquivo legivel img bytes=${o.length()}")
                 }
                 val out = File(ctx.cacheDir, "teste-imagens.pdf")
@@ -78,7 +78,7 @@ object SelfTest {
                     val b = d.render(0, 800, 1200, false)
                     Log.i(tag, "recorte gravado pdf: ${b?.width}x${b?.height} (esperado mais largo que alto)")
                     d.close()
-                    val m = openDoc(f)!!.render(0, 800, 1200, false, false, android.graphics.RectF(0f, 0f, 1f, 0.5f))
+                    val m = openDoc(f)!!.render(0, 800, 1200, false, null, android.graphics.RectF(0f, 0f, 1f, 0.5f))
                     Log.i(tag, "recorte manual tela: ${m?.width}x${m?.height}")
                 }
                 val ab = AppBackup.create(ctx)

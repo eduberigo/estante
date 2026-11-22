@@ -38,13 +38,14 @@ fun PrepareFilesDialog(
     paths: List<String>,
     volumes: List<Volume>,
     lib: Library,
-    state: ExplorerState,
+    autoCrop: Boolean,
+    onRelink: (Map<String, String>) -> Unit,
     onDone: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val files = remember(paths) { paths.map { File(it) }.filter { it.isFile && Fs.kindOf(it) in setOf(Kind.PDF, Kind.IMAGE) } }
-    var crop by remember { mutableStateOf(state.autoCrop) }
+    var crop by remember { mutableStateOf(autoCrop) }
     var replace by remember { mutableStateOf(false) }
     var relinkCopies by remember { mutableStateOf(true) }
     var running by remember { mutableStateOf(false) }
@@ -55,7 +56,7 @@ fun PrepareFilesDialog(
     Dialog(onDismissRequest = { if (!running) onDone() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxWidth(0.92f), shape = RoundedCornerShape(16.dp)) {
             Column(Modifier.padding(20.dp)) {
-                Text("Aplicar modo legível ao arquivo", style = MaterialTheme.typography.titleLarge)
+                Text("Gravar ajustes de imagem no arquivo", style = MaterialTheme.typography.titleLarge)
                 val r = report
                 if (r != null) {
                     Text(r, modifier = Modifier.padding(top = 12.dp))
@@ -65,8 +66,8 @@ fun PrepareFilesDialog(
                     return@Column
                 }
                 Text(
-                    "${files.size} arquivo(s). Endireita a página, limpa o fundo e reforça o traço, " +
-                        "para não precisar ligar o modo legível na hora do show. " +
+                    "${files.size} arquivo(s). Usa os ajustes de imagem salvos de cada partitura " +
+                        "(endireitar, fundo, preto, nitidez); sem ajustes salvos, usa o atalho Legível. " +
                         "O PDF resultante é feito de imagens das páginas (como uma digitalização).",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -114,7 +115,9 @@ fun PrepareFilesDialog(
                                     val ext = if (Fs.kindOf(src) == Kind.PDF) "pdf" else "jpg"
                                     val tmp = if (replace) File(dir, ".estante-tmp-${System.nanoTime()}.$ext")
                                     else Export.unique(dir, "${src.nameWithoutExtension} (legível)", ext)
-                                    Export.enhanceFile(src, tmp, crop) { p, n ->
+                                    val nt = AnnStore.load(ctx, src.absolutePath)
+                                    val lk = nt.look?.takeIf { !it.isDefault } ?: Look.LEGIVEL
+                                    Export.enhanceFile(src, tmp, crop, lk, nt) { p, n ->
                                         status = "${fi + 1}/${files.size}: ${src.nameWithoutExtension} — página $p de $n"
                                         frac = (fi + p.toFloat() / n) / files.size
                                     }
@@ -124,6 +127,8 @@ fun PrepareFilesDialog(
                                         if (t.done != 1) throw IllegalStateException("não consegui mover o original para a lixeira")
                                         if (!tmp.renameTo(target)) throw IllegalStateException("não consegui renomear")
                                         if (target.absolutePath != src.absolutePath) links[src.absolutePath] = target.absolutePath
+                                        // Os ajustes já estão gravados na imagem: não aplicar de novo.
+                                        AnnStore.save(ctx, target.absolutePath, nt.copy(look = null, crops = emptyMap()))
                                     } else if (relinkCopies) {
                                         links[src.absolutePath] = tmp.absolutePath
                                     }
@@ -134,8 +139,7 @@ fun PrepareFilesDialog(
                             }
                             lib.relink(links)
                             AnnStore.relink(ctx, links)
-                            state.relink(links)
-                            state.reloadTick++
+                            onRelink(links)
                             running = false
                             report = "Prontos: $ok" + if (fail.isNotEmpty()) "\nFalharam: ${fail.joinToString()}" else ""
                         }

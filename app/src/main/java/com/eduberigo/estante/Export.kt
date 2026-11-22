@@ -114,7 +114,9 @@ object Export {
      * Grava o modo legível no arquivo (página endireitada, fundo limpo, traço reforçado; recorte opcional).
      * PDF vira PDF de imagens; imagem vira JPG. A saída vai para [out].
      */
-    suspend fun enhanceFile(src: File, out: File, crop: Boolean, progress: (Int, Int) -> Unit) = withContext(Dispatchers.IO) {
+    suspend fun enhanceFile(
+        src: File, out: File, crop: Boolean, look: Look, notes: FileNotes?, progress: (Int, Int) -> Unit,
+    ) = withContext(Dispatchers.IO) {
         when (Fs.kindOf(src)) {
             Kind.PDF -> {
                 val pdf = PdfDoc(src)
@@ -122,7 +124,7 @@ object Export {
                     newDoc().use { doc ->
                         for (i in 0 until pdf.pageCount) {
                             progress(i + 1, pdf.pageCount)
-                            val bmp = pdf.render(i, 1600, 2260, crop, true)
+                            val bmp = pdf.render(i, 1600, 2260, crop, look, notes?.cropFor(i))
                                 ?: throw IllegalStateException("página ${i + 1} não renderizou")
                             val w = 595f
                             val h = w * bmp.height / bmp.width
@@ -140,7 +142,7 @@ object Export {
             }
             Kind.IMAGE -> {
                 progress(1, 1)
-                val bmp = ImageDoc(src).render(0, 1600, 2260, crop, true)
+                val bmp = ImageDoc(src).render(0, 1600, 2260, crop, look, notes?.cropFor(0))
                     ?: throw IllegalStateException("imagem não abriu")
                 out.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 92, it) }
                 bmp.recycle()

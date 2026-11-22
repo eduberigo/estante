@@ -58,6 +58,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -127,8 +128,6 @@ fun ReaderScreen(
     lib: Library,
     autoCrop: Boolean,
     onAutoCrop: (Boolean) -> Unit,
-    enhance: Boolean,
-    onEnhance: (Boolean) -> Unit,
     onClose: () -> Unit,
 ) {
     val ctx = LocalContext.current
@@ -226,6 +225,11 @@ fun ReaderScreen(
     var cropEdit by remember { mutableStateOf(false) }
     var cropFiles by remember { mutableStateOf<Pair<List<File>, (File, Int) -> RectF?>?>(null) }
     val volumes = remember { Fs.volumes(ctx) }
+    val metro = remember { Metronome() }
+    DisposableEffect(Unit) { onDispose { metro.stop() } }
+    var metroPanel by remember { mutableStateOf(false) }
+    var imagePanel by remember { mutableStateOf(false) }
+    var applyFile by remember { mutableStateOf<String?>(null) }
 
     fun goTo(page: Int) {
         val t = page.coerceIn(0, count - 1)
@@ -276,7 +280,7 @@ fun ReaderScreen(
                 doc = doc,
                 index = index,
                 crop = autoCrop,
-                enhance = enhance,
+                look = n?.look ?: Look(),
                 manual = n?.cropFor(pg),
                 anns = n?.pages?.get(pg).orEmpty(),
                 anchors = n?.anchors.orEmpty().filter { it.page == pg },
@@ -419,8 +423,17 @@ fun ReaderScreen(
                 ) {
                     BarButton("✎ Anotar", true) { tool = Tool.PEN; showBars = false }
                     BarButton("⚓ Âncoras${if (anchors.isNotEmpty()) " (${anchors.size})" else ""}", true) { anchorList = true }
-                    BarButton("Legível", enhance) { onEnhance(!enhance) }
+                    BarButton("◐ Imagem", true) { imagePanel = true; showBars = false }
                     BarButton("✂ Recortar", true) { cropEdit = true; showBars = false }
+                    BarButton("♩ Metrônomo", true) {
+                        val n = notes[file.absolutePath]
+                        if (!metro.running.value) {
+                            metro.bpm = n?.bpm ?: Meta.bpmOf(file.nameWithoutExtension) ?: metro.bpm
+                            metro.beats = n?.beats ?: metro.beats
+                        }
+                        metroPanel = true
+                        showBars = false
+                    }
                     IconButton(onClick = { onAutoCrop(!autoCrop) }) {
                         Icon(
                             painterResource(R.drawable.ic_crop),
@@ -473,6 +486,39 @@ fun ReaderScreen(
                 onNextPage = { goTo(pager.currentPage + 1) },
                 onDone = { tool = null },
                 modifier = Modifier.align(Alignment.BottomCenter),
+            )
+        }
+
+        MetroIndicator(metro, Modifier.align(Alignment.TopStart))
+
+        if (imagePanel) {
+            val (ipath, _) = keyOf(pager.currentPage)
+            ImagePanel(
+                look = notes[ipath]?.look ?: Look(),
+                onLook = { lk -> update(ipath) { it.copy(look = if (lk.isDefault) null else lk) } },
+                onApplyFile = { applyFile = ipath },
+                onClose = { imagePanel = false },
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
+        }
+        applyFile?.let { p ->
+            PrepareFilesDialog(listOf(p), volumes, lib, autoCrop, onRelink = { }) {
+                applyFile = null
+                notes.clear()
+                reloadKey++
+            }
+        }
+
+        if (metroPanel) {
+            MetronomePanel(
+                metro = metro,
+                modifier = Modifier.align(Alignment.BottomCenter),
+                onClose = {
+                    metroPanel = false
+                    val bpm = metro.bpm
+                    val beats = metro.beats
+                    update(file.absolutePath) { it.copy(bpm = bpm, beats = beats) }
+                },
             )
         }
 
@@ -781,7 +827,7 @@ private fun PageView(
     doc: Doc,
     index: Int,
     crop: Boolean,
-    enhance: Boolean,
+    look: Look,
     manual: RectF?,
     anns: List<Ann>,
     anchors: List<Anchor>,
@@ -803,9 +849,9 @@ private fun PageView(
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wPx = constraints.maxWidth
         val hPx = constraints.maxHeight
-        val rendered by produceState<Pair<Bitmap, RectF>?>(null, doc, index, wPx, hPx, crop, enhance, manual) {
+        val rendered by produceState<Pair<Bitmap, RectF>?>(null, doc, index, wPx, hPx, crop, look, manual) {
             // Um pouco acima do tamanho da tela, para o zoom não borrar tanto.
-            val b = doc.render(index, (wPx * 1.3f).toInt(), (hPx * 1.3f).toInt(), crop, enhance, manual)
+            val b = doc.render(index, (wPx * 1.3f).toInt(), (hPx * 1.3f).toInt(), crop, look, manual)
             value = b?.let { it to RectF(doc.shownRect(index)) }
         }
         var scale by remember { mutableFloatStateOf(1f) }
@@ -959,3 +1005,189 @@ private fun PageView(
 
 private val clockFmt = java.text.SimpleDateFormat("HH:mm", java.util.Locale("pt", "BR"))
 private fun nowText(): String = clockFmt.format(java.util.Date())
+
+
+/** Indicador discreto no canto: pisca a cada tempo (maior e laranja no 1). Toque para parar. */
+@Composable
+private fun MetroIndicator(metro: Metronome, modifier: Modifier) {
+    val beat by metro.beat.collectAsState()
+    val running by metro.running.collectAsState()
+    if (!running) return
+    Box(
+        modifier
+            .displayCutoutPadding()
+            .statusBarsPadding()
+            .padding(10.dp)
+            .size(34.dp)
+            .clickable { metro.stop() },
+        contentAlignment = Alignment.Center,
+    ) {
+        val first = beat == 0
+        Box(
+            Modifier
+                .size(if (first) 26.dp else 18.dp)
+                .clip(CircleShape)
+                .background(if (first) Color(0xFFFF9800) else Color.White.copy(alpha = 0.85f))
+        )
+        if (beat >= 0) {
+            Text(
+                (beat + 1).toString(),
+                color = Color.Black,
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
+    }
+}
+
+/** Painel do metrônomo: BPM, compasso, som, tocar, contagem de 2 compassos. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun MetronomePanel(metro: Metronome, modifier: Modifier, onClose: () -> Unit) {
+    val running by metro.running.collectAsState()
+    var bpm by remember { mutableIntStateOf(metro.bpm) }
+    var beats by remember { mutableIntStateOf(metro.beats) }
+    var sound by remember { mutableStateOf(metro.sound) }
+    val taps = remember { mutableStateListOf<Long>() }
+    fun setBpm(v: Int) {
+        bpm = v.coerceIn(30, 300)
+        metro.bpm = bpm
+    }
+    Surface(modifier.fillMaxWidth().navigationBarsPadding(), color = Color(0xF0202124)) {
+        Column(Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("♩ = $bpm", color = Color.White, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+                listOf(-5, -1, 1, 5).forEach { d ->
+                    TextButton(onClick = { setBpm(bpm + d) }) { Text(if (d > 0) "+$d" else "$d", color = Color.White) }
+                }
+                OutlinedButtonDark("Tap") {
+                    val now = System.currentTimeMillis()
+                    if (taps.isNotEmpty() && now - taps.last() > 2000) taps.clear()
+                    taps.add(now)
+                    if (taps.size > 5) taps.removeAt(0)
+                    if (taps.size >= 2) {
+                        val avg = (taps.last() - taps.first()).toDouble() / (taps.size - 1)
+                        setBpm((60000.0 / avg).roundToInt())
+                    }
+                }
+            }
+            Slider(value = bpm.toFloat(), onValueChange = { setBpm(it.roundToInt()) }, valueRange = 30f..260f)
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                Text("Compasso:", color = Color.LightGray, modifier = Modifier.padding(end = 6.dp))
+                listOf(2, 3, 4, 6).forEach { b ->
+                    Text(
+                        "$b/${if (b == 6) 8 else 4}",
+                        color = if (b == beats) Color.Black else Color.White,
+                        modifier = Modifier
+                            .padding(horizontal = 3.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(if (b == beats) Color(0xFF8AB4F8) else Color(0xFF3C4043))
+                            .clickable { beats = b; metro.beats = b }
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                }
+                Text(
+                    if (sound) "Som: ligado" else "Som: desligado (só visual)",
+                    color = Color.White,
+                    modifier = Modifier
+                        .padding(start = 10.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color(0xFF3C4043))
+                        .clickable { sound = !sound; metro.sound = sound }
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                )
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Button(onClick = { if (running) metro.stop() else metro.start() }) {
+                    Text(if (running) "■ Parar" else "▶ Tocar")
+                }
+                OutlinedButtonDark("Contagem: 2 compassos") { metro.start(countInBars = 2) }
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = onClose) { Text("Fechar", color = Color.White) }
+            }
+            Text(
+                "A contagem toca 2 compassos e para sozinha. O indicador fica no canto de cima; toque nele para parar.",
+                color = Color.Gray,
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
+    }
+}
+
+@Composable
+private fun OutlinedButtonDark(label: String, onClick: () -> Unit) {
+    androidx.compose.material3.OutlinedButton(onClick = onClick) { Text(label, color = Color.White) }
+}
+
+
+/**
+ * Ajustes de imagem desta partitura. Ficam salvos por arquivo: ao voltar, a partitura aparece igual.
+ * "Gravar no arquivo" deixa tudo pronto antes do show.
+ */
+@Composable
+private fun ImagePanel(
+    look: Look,
+    onLook: (Look) -> Unit,
+    onApplyFile: () -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier,
+) {
+    // Valores locais enquanto arrasta; salva ao soltar (cada render custa).
+    var paper by remember(look) { mutableFloatStateOf(look.paper) }
+    var ink by remember(look) { mutableFloatStateOf(look.ink) }
+    var sharp by remember(look) { mutableFloatStateOf(look.sharp) }
+    Surface(modifier.fillMaxWidth().navigationBarsPadding(), color = Color(0xF0202124)) {
+        Column(Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Ajustes de imagem desta partitura", color = Color.White, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                TextButton(onClick = onClose) { Text("Fechar", color = Color.White) }
+            }
+            Row(
+                Modifier.fillMaxWidth().clickable { onLook(look.copy(deskew = !look.deskew)) }.padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                androidx.compose.material3.Switch(checked = look.deskew, onCheckedChange = { onLook(look.copy(deskew = it)) })
+                Text(
+                    "  Endireitar página torta" + if (look.deskew) " (ligado)" else " (desligado)",
+                    color = Color.White,
+                )
+            }
+            SliderRow("Fundo", "normal", "mais branco", paper, 0f..1f, { paper = it }) { onLook(look.copy(paper = paper)) }
+            SliderRow("Preto", "mais claro", "mais escuro", ink, -1f..1f, { ink = it }) { onLook(look.copy(ink = ink)) }
+            SliderRow("Nitidez", "mais suave", "mais nítida", sharp, -1f..1f, { sharp = it }) { onLook(look.copy(sharp = sharp)) }
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedButtonDark("Atalho: Legível") { onLook(Look.LEGIVEL.copy(deskew = look.deskew)) }
+                OutlinedButtonDark("Restaurar") { onLook(Look(deskew = look.deskew)) }
+                Button(onClick = onApplyFile) { Text("Gravar no arquivo…") }
+            }
+            Text(
+                "Os ajustes ficam salvos só para esta partitura. Curvatura de página (livro aberto) não é corrigida.",
+                color = Color.Gray,
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SliderRow(
+    label: String, left: String, right: String, value: Float, range: ClosedFloatingPointRange<Float>,
+    onChange: (Float) -> Unit, onDone: () -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, color = Color.White, modifier = Modifier.width(64.dp))
+        Text(left, color = Color.Gray, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(70.dp))
+        Slider(
+            value = value, onValueChange = onChange, onValueChangeFinished = onDone,
+            valueRange = range, modifier = Modifier.weight(1f),
+        )
+        Text(right, color = Color.Gray, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(78.dp).padding(start = 6.dp))
+    }
+}
