@@ -3,6 +3,7 @@ name: Gerar APK
 on:
   push:
     branches: [main]
+    paths-ignore: ['test/**', '.github/workflows/emulator.yml']
   workflow_dispatch:
 
 permissions:

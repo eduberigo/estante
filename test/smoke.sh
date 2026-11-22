@@ -12,6 +12,7 @@ adb shell cmd package resolve-activity --brief $PKG >> out/install.txt 2>&1
 adb shell monkey -p $PKG -c android.intent.category.LAUNCHER 1 >> out/install.txt 2>&1
 sleep 8
 adb exec-out screencap -p > out/1-sem-permissao.png
+adb shell uiautomator dump /sdcard/ui1.xml >/dev/null 2>&1; adb pull /sdcard/ui1.xml out/ui1.xml
 adb shell dumpsys activity activities | grep -E "mResumedActivity|topResumedActivity" > out/atividade-1.txt
 
 # 2) Com permissão e partituras de teste
@@ -25,6 +26,7 @@ adb shell am force-stop $PKG
 adb shell monkey -p $PKG -c android.intent.category.LAUNCHER 1
 sleep 8
 adb exec-out screencap -p > out/2-com-permissao.png
+adb shell uiautomator dump /sdcard/ui2.xml >/dev/null 2>&1; adb pull /sdcard/ui2.xml out/ui2.xml
 adb shell dumpsys activity activities | grep -E "mResumedActivity|topResumedActivity" > out/atividade-2.txt
 
 # 3) Entra em Partituras/Casamentos (toque pelo texto não é confiável; usa am start com a pasta salva)
@@ -36,4 +38,9 @@ adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb pull /sdcard/ui
 
 adb logcat -d > out/logcat-completo.txt
 grep -E "AndroidRuntime|FATAL|$PKG|estante" out/logcat-completo.txt > out/logcat-app.txt
+set +x
+for f in out/install.txt out/atividade-1.txt out/atividade-2.txt; do echo "===== $f"; cat "$f"; done
+for f in out/ui1.xml out/ui2.xml out/ui.xml; do echo "===== TEXTOS $f"; grep -o 'text="[^"]*"' "$f" | grep -v 'text=""' | head -60; grep -o 'content-desc="[^"]*"' "$f" | grep -v '=""' | head -30; done
+echo "===== ERROS"; grep -E "FATAL|AndroidRuntime|E/.*estante" -A 25 out/logcat-completo.txt | head -150
+echo "===== FIM"
 exit 0
