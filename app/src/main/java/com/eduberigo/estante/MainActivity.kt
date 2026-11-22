@@ -116,6 +116,14 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("thumbSize", 1)
         set(v) { sp.edit().putInt("thumbSize", v).apply() }
 
+    var enhance: Boolean
+        get() = sp.getBoolean("enhance", false)
+        set(v) { sp.edit().putBoolean("enhance", v).apply() }
+
+    var textScale: Float
+        get() = sp.getFloat("textScale", 1f)
+        set(v) { sp.edit().putFloat("textScale", v).apply() }
+
     var autoCrop: Boolean
         get() = sp.getBoolean("autoCrop", true)
         set(v) { sp.edit().putBoolean("autoCrop", v).apply() }
@@ -189,11 +197,18 @@ fun App(hasPermission: Boolean, requestPermission: () -> Unit) {
                 lib = lib,
                 autoCrop = explorer.autoCrop,
                 onAutoCrop = { explorer.updateAutoCrop(it) },
+                enhance = explorer.enhance,
+                onEnhance = { explorer.updateEnhance(it) },
                 onClose = { reading = null },
             )
         }
     } else {
-        ExplorerScreen(explorer, lib, onOpen = { files, i, title -> reading = Reading(files, i, title) })
+        val d = androidx.compose.ui.platform.LocalDensity.current
+        androidx.compose.runtime.CompositionLocalProvider(
+            androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(d.density, d.fontScale * explorer.textScale),
+        ) {
+            ExplorerScreen(explorer, lib, onOpen = { files, i, title -> reading = Reading(files, i, title) })
+        }
     }
 }
 

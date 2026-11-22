@@ -83,7 +83,7 @@ fun SaveImagesPdfDialog(files: List<File>, current: Int, lib: Library, onDismiss
     }
 
     if (addTo && saved != null) {
-        AddToSetlistDialog(lib, saved!!.absolutePath) { addTo = false; onDismiss() }
+        AddToSetlistDialog(lib, listOf(saved!!.absolutePath)) { addTo = false; onDismiss() }
         return
     }
 

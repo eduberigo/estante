@@ -27,6 +27,18 @@ object SelfTest {
                     val d = openDoc(f)!!
                     Log.i(tag, "imagens em sequencia: paginas=${d.pageCount} inicio=${d.startPage}")
                 }
+                pdfs.firstOrNull()?.let { f ->
+                    val d = openDoc(f)!!
+                    val b = d.render(0, 800, 1200, true, true)
+                    Log.i(tag, "legivel ${b?.width}x${b?.height}")
+                    d.close()
+                }
+                imgs.filter { it.name.startsWith("torta") }.forEach { f ->
+                    val bmp = decodeImage(f, 1600, 2400)
+                    val a = Enhance.skewAngle(bmp)
+                    val fixed = Enhance.rotate(bmp, a)
+                    Log.i(tag, "torta ${f.name}: angulo=$a depois=${Enhance.skewAngle(fixed)}")
+                }
                 val out = File(ctx.cacheDir, "teste-imagens.pdf")
                 Export.imagesToPdf(imgs, out)
                 Log.i(tag, "imagesToPdf ok bytes=${out.length()}")

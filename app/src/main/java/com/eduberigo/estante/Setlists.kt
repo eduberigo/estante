@@ -159,13 +159,15 @@ fun SetlistContent(
 
 /** Escolher em qual setlist colocar a música (ou criar um novo). */
 @Composable
-fun AddToSetlistDialog(lib: Library, path: String, onDismiss: () -> Unit) {
+fun AddToSetlistDialog(lib: Library, paths: List<String>, onDismiss: () -> Unit) {
+    val many = paths.size > 1
+    val what = if (many) "${paths.size} músicas adicionadas" else "Adicionada"
     val ctx = LocalContext.current
     var creating by remember { mutableStateOf(false) }
     if (creating) {
         NameDialog("Novo setlist", "", onDismiss = { creating = false }) { name ->
-            val s = lib.create(name, listOf(path))
-            Toast.makeText(ctx, "Adicionada a \"${s.name}\"", Toast.LENGTH_SHORT).show()
+            val s = lib.create(name, paths)
+            Toast.makeText(ctx, "$what a \"${s.name}\"", Toast.LENGTH_SHORT).show()
             onDismiss()
         }
         return
@@ -179,7 +181,7 @@ fun AddToSetlistDialog(lib: Library, path: String, onDismiss: () -> Unit) {
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
                 )
                 Text(
-                    File(path).nameWithoutExtension,
+                    if (many) "${paths.size} músicas selecionadas" else File(paths.firstOrNull() ?: "").nameWithoutExtension,
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
@@ -190,13 +192,13 @@ fun AddToSetlistDialog(lib: Library, path: String, onDismiss: () -> Unit) {
                 ActionRow("+ Novo setlist…") { creating = true }
                 Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
                     lib.setlists.forEach { s ->
-                        val has = s.items.any { it.path == path }
+                        val has = !many && s.items.any { it.path == paths.firstOrNull() }
                         Row(
                             Modifier
                                 .fillMaxWidth()
                                 .clickable {
-                                    lib.add(s.id, path)
-                                    Toast.makeText(ctx, "Adicionada a \"${s.name}\"", Toast.LENGTH_SHORT).show()
+                                    paths.forEach { lib.add(s.id, it) }
+                                    Toast.makeText(ctx, "$what a \"${s.name}\"", Toast.LENGTH_SHORT).show()
                                     onDismiss()
                                 }
                                 .padding(horizontal = 20.dp, vertical = 14.dp),

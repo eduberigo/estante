@@ -88,6 +88,8 @@ fun ReaderScreen(
     lib: Library,
     autoCrop: Boolean,
     onAutoCrop: (Boolean) -> Unit,
+    enhance: Boolean,
+    onEnhance: (Boolean) -> Unit,
     onClose: () -> Unit,
 ) {
     val activity = LocalContext.current as MainActivity
@@ -172,7 +174,7 @@ fun ReaderScreen(
             beyondViewportPageCount = 1,
             key = { it },
         ) { index ->
-            PageView(doc, index, autoCrop) { frac ->
+            PageView(doc, index, autoCrop, enhance) { frac ->
                 when {
                     frac < 0.3f -> turn(-1)
                     frac > 0.7f -> turn(1)
@@ -251,6 +253,9 @@ fun ReaderScreen(
                         Text("Salvar PDF", color = Color(0xFF8AB4F8))
                     }
                 }
+                androidx.compose.material3.TextButton(onClick = { onEnhance(!enhance) }) {
+                    Text("Legível", color = if (enhance) Color(0xFF8AB4F8) else Color.Gray)
+                }
                 IconButton(onClick = { onAutoCrop(!autoCrop) }) {
                     Icon(
                         painterResource(R.drawable.ic_crop),
@@ -289,14 +294,14 @@ fun ReaderScreen(
 
 /** Uma página: desenhada no tamanho da tela; pinça para ampliar; toque nas bordas vira. */
 @Composable
-private fun PageView(doc: Doc, index: Int, crop: Boolean, onTap: (Float) -> Unit) {
+private fun PageView(doc: Doc, index: Int, crop: Boolean, enhance: Boolean, onTap: (Float) -> Unit) {
     val tapHandler by rememberUpdatedState(onTap)
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wPx = constraints.maxWidth
         val hPx = constraints.maxHeight
-        val bmp by produceState<Bitmap?>(null, doc, index, wPx, hPx, crop) {
+        val bmp by produceState<Bitmap?>(null, doc, index, wPx, hPx, crop, enhance) {
             // Um pouco acima do tamanho da tela, para o zoom não borrar tanto.
-            value = doc.render(index, (wPx * 1.3f).toInt(), (hPx * 1.3f).toInt(), crop)
+            value = doc.render(index, (wPx * 1.3f).toInt(), (hPx * 1.3f).toInt(), crop, enhance)
         }
         var scale by remember { mutableFloatStateOf(1f) }
         var offset by remember { mutableStateOf(Offset.Zero) }

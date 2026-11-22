@@ -136,6 +136,18 @@ class Library(ctx: Context) {
         }
     }
 
+    /** Depois de mover arquivos/pastas, aponta os setlists para os caminhos novos. */
+    fun relink(moved: Map<String, String>) {
+        if (moved.isEmpty()) return
+        fun map(p: String): String {
+            moved[p]?.let { return it }
+            for ((a, b) in moved) if (p.startsWith("$a/")) return b + p.removePrefix(a)
+            return p
+        }
+        setlists = setlists.map { sl -> sl.copy(items = sl.items.map { it.copy(path = map(it.path)) }) }
+        saveSetlists()
+    }
+
     // ---------- histórico ----------
 
     fun recordPlay(path: String, seconds: Int) {

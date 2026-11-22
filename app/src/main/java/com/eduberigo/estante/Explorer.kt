@@ -153,6 +153,50 @@ class ExplorerState(private val prefs: Prefs) {
 
     var autoCrop by mutableStateOf(prefs.autoCrop)
         private set
+
+    var enhance by mutableStateOf(prefs.enhance)
+        private set
+
+    fun updateEnhance(v: Boolean) {
+        enhance = v
+        prefs.enhance = v
+    }
+
+    var textScale by mutableFloatStateOf(prefs.textScale)
+        private set
+
+    fun updateTextScale(v: Float) {
+        textScale = v.coerceIn(0.8f, 1.6f)
+        prefs.textScale = textScale
+    }
+
+    /** Seleção múltipla (caminhos). Vazia = modo normal. */
+    var selection by mutableStateOf<Set<String>>(emptySet())
+
+    fun toggleSel(p: String) {
+        selection = if (p in selection) selection - p else selection + p
+    }
+
+    fun isSel(p: String) = selected?.path == p || p in selection
+
+    /** Itens "recortados/copiados" aguardando colar numa pasta. */
+    data class Clip(val paths: List<String>, val move: Boolean)
+
+    var clip by mutableStateOf<Clip?>(null)
+
+    /** Depois de mover: favoritos e pastas do Início seguem os caminhos novos. */
+    fun relink(moved: Map<String, String>) {
+        if (moved.isEmpty()) return
+        fun map(p: String): String {
+            moved[p]?.let { return it }
+            for ((a, b) in moved) if (p.startsWith("$a/")) return b + p.removePrefix(a)
+            return p
+        }
+        favorites = favorites.map(::map)
+        prefs.favorites = favorites
+        pinned = pinned.map(::map)
+        prefs.pinned = pinned
+    }
     var showPreviewPref by mutableStateOf(prefs.showPreview)
         private set
     var splitPortrait by mutableFloatStateOf(prefs.splitPortrait)
@@ -315,6 +359,8 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
     var previewEntry by remember { mutableStateOf<Entry?>(null) }
     var actionsEntry by remember { mutableStateOf<Entry?>(null) }
     var addToSetlist by remember { mutableStateOf<String?>(null) }
+    var addToSetlistMany by remember { mutableStateOf<List<String>?>(null) }
+    var confirmDelete by remember { mutableStateOf<List<String>?>(null) }
     var newSetlist by remember { mutableStateOf(false) }
     var setItem by remember { mutableStateOf<Pair<Entry, Int>?>(null) }
 
@@ -383,7 +429,13 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
             else -> state.dir.parentFile?.let { state.navigate(it) } ?: state.goHome()
         }
     }
-    BackHandler(enabled = state.searching || !state.atHome) { goBack() }
+    BackHandler(enabled = state.searching || !state.atHome || state.selection.isNotEmpty() || state.clip != null) {
+        when {
+            state.selection.isNotEmpty() -> state.selection = emptySet()
+            state.clip != null && state.atHome -> state.clip = null
+            else -> goBack()
+        }
+    }
 
     fun open(e: Entry) {
         if (state.searching) state.rememberSearch(state.query)
@@ -413,9 +465,13 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
         val showFolderAction = state.searching || state.atHome || state.openSetlist != null
 
         fun click(e: Entry) {
+            if (state.selection.isNotEmpty()) {
+                state.toggleSel(e.path)
+                return
+            }
             when {
                 e.kind == Kind.DIR || !e.file.exists() -> open(e)
-                previewOn && state.selected?.path == e.path -> open(e)
+                previewOn && state.isSel(e.path) -> open(e)
                 previewOn -> state.selected = e
                 else -> open(e)
             }
@@ -432,7 +488,24 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
 
         Scaffold(
             topBar = {
-                TopAppBar(
+                if (state.selection.isNotEmpty()) {
+                    SelectionTopBar(
+                        state = state,
+                        visible = if (state.searching) state.results else if (state.atHome) emptyList() else state.entries,
+                        onAddToSetlist = { addToSetlistMany = state.selection.filter { File(it).isFile } },
+                        onCopy = {
+                            state.clip = ExplorerState.Clip(state.selection.toList(), move = false)
+                            state.selection = emptySet()
+                            if (state.searching) state.closeSearch()
+                        },
+                        onMove = {
+                            state.clip = ExplorerState.Clip(state.selection.toList(), move = true)
+                            state.selection = emptySet()
+                            if (state.searching) state.closeSearch()
+                        },
+                        onDelete = { confirmDelete = state.selection.toList() },
+                    )
+                } else TopAppBar(
                     title = {
                         when {
                             state.searching -> SearchField(state)
@@ -538,6 +611,24 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                                         leadingIcon = { Icon(painterResource(R.drawable.ic_crop), null) },
                                         onClick = { menuOpen = false; state.updateAutoCrop(!state.autoCrop) },
                                     )
+                                    DropdownMenuItem(
+                                        text = { Text(if (state.enhance) "Modo legível: ligado" else "Modo legível: desligado") },
+                                        onClick = { menuOpen = false; state.updateEnhance(!state.enhance) },
+                                    )
+                                    HorizontalDivider()
+                                    Row(
+                                        Modifier.padding(horizontal = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Text("Texto", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(end = 8.dp))
+                                        OutlinedButton(onClick = { state.updateTextScale(state.textScale - 0.1f) }) { Text("A−") }
+                                        Text(
+                                            "${(state.textScale * 100).toInt()}%",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            modifier = Modifier.padding(horizontal = 8.dp),
+                                        )
+                                        OutlinedButton(onClick = { state.updateTextScale(state.textScale + 0.1f) }) { Text("A+") }
+                                    }
                                     HorizontalDivider()
                                     Text(
                                         "Tamanho das miniaturas",
@@ -632,6 +723,31 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                                 else -> FolderContent(state, ::click, ::longClick)
                             }
                         }
+                        val c = state.clip
+                        if (c != null && !state.searching) {
+                            PasteBar(
+                                clip = c,
+                                canPaste = !state.atHome && state.openSetlist == null,
+                                here = state.dir.name,
+                                onPaste = {
+                                    val dest = state.dir
+                                    state.clip = null
+                                    scope.launch {
+                                        val r = if (c.move) FileOps.move(c.paths, dest) else FileOps.copy(c.paths, dest)
+                                        lib.relink(r.moved)
+                                        state.relink(r.moved)
+                                        state.reloadTick++
+                                        Toast.makeText(
+                                            ctx,
+                                            "${if (c.move) "Movidos" else "Copiados"}: ${r.done}" +
+                                                if (r.failed.isNotEmpty()) " • falharam: ${r.failed.joinToString()}" else "",
+                                            Toast.LENGTH_LONG,
+                                        ).show()
+                                    }
+                                },
+                                onCancel = { state.clip = null },
+                            )
+                        }
                         if (state.pickingFolder && !state.atHome && state.openSetlist == null && !state.searching) {
                             PickFolderBar(
                                 state = state,
@@ -656,6 +772,7 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                         PreviewPane(
                             entry = sel,
                             crop = state.autoCrop,
+                            enhance = state.enhance,
                             favorite = sel != null && state.isFav(sel.path),
                             onToggleFav = { e -> state.toggleFav(e.path) },
                             onAddToSetlist = { e -> addToSetlist = e.path },
@@ -687,6 +804,7 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                     PreviewPane(
                         entry = e,
                         crop = state.autoCrop,
+                            enhance = state.enhance,
                         favorite = state.isFav(e.path),
                         onToggleFav = { x -> state.toggleFav(x.path) },
                         onAddToSetlist = { x -> previewEntry = null; addToSetlist = x.path },
@@ -698,7 +816,38 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
         }
 
         addToSetlist?.let { p ->
-            AddToSetlistDialog(lib, p) { addToSetlist = null }
+            AddToSetlistDialog(lib, listOf(p)) { addToSetlist = null }
+        }
+        addToSetlistMany?.let { ps ->
+            AddToSetlistDialog(lib, ps) { addToSetlistMany = null; state.selection = emptySet() }
+        }
+        confirmDelete?.let { ps ->
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { confirmDelete = null },
+                title = { Text("Apagar ${ps.size} ${if (ps.size == 1) "item" else "itens"}?") },
+                text = {
+                    Text(
+                        "Vão para a pasta Estante-Lixeira (na raiz da memória ou do cartão). " +
+                            "Dá para recuperar de lá; para apagar de vez, apague essa pasta."
+                    )
+                },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(onClick = {
+                        confirmDelete = null
+                        state.selection = emptySet()
+                        scope.launch {
+                            val r = FileOps.trash(ps, volumes)
+                            state.reloadTick++
+                            Toast.makeText(
+                                ctx,
+                                "Na lixeira: ${r.done}" + if (r.failed.isNotEmpty()) " • falharam: ${r.failed.joinToString()}" else "",
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                    }) { Text("Apagar") }
+                },
+                dismissButton = { androidx.compose.material3.TextButton(onClick = { confirmDelete = null }) { Text("Cancelar") } },
+            )
         }
         if (newSetlist) {
             NameDialog("Novo setlist", "", onDismiss = { newSetlist = false }) { name ->
@@ -723,6 +872,7 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
             ActionsDialog(
                 e = e,
                 state = state,
+                onSelect = if (!state.atHome || state.searching) ({ actionsEntry = null; state.selection = setOf(e.path) }) else null,
                 onAddToSetlist = if (e.kind != Kind.DIR) ({ actionsEntry = null; addToSetlist = e.path }) else null,
                 onDismiss = { actionsEntry = null },
                 onShowFolder = if (showFolderAction && e.kind != Kind.DIR) ({ actionsEntry = null; showInFolder(e.file) }) else null,
@@ -799,6 +949,7 @@ private fun appVersion(ctx: android.content.Context): String = try {
 private fun ActionsDialog(
     e: Entry,
     state: ExplorerState,
+    onSelect: (() -> Unit)?,
     onAddToSetlist: (() -> Unit)?,
     onDismiss: () -> Unit,
     onShowFolder: (() -> Unit)?,
@@ -820,6 +971,7 @@ private fun ActionsDialog(
                     modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 8.dp),
                 )
                 HorizontalDivider()
+                if (onSelect != null) ActionRow("Selecionar vários (mover, copiar, apagar…)") { onSelect() }
                 val pinned = state.isPinned(e.path)
                 if (e.kind == Kind.DIR) {
                     ActionRow(if (pinned) "Remover do Início" else "Adicionar ao Início") {
@@ -1057,7 +1209,7 @@ private fun HomeContent(
             val e = favs[i]
             GridItem(
                 e = e,
-                selected = state.selected?.path == e.path,
+                selected = state.isSel(e.path),
                 fav = false,
                 subtitle = e.file.parentFile?.name,
                 dim = !e.file.exists(),
@@ -1137,7 +1289,7 @@ private fun FolderContent(state: ExplorerState, onClick: (Entry) -> Unit, onLong
                 val e = entries[i]
                 GridItem(
                     e = e,
-                    selected = state.selected?.path == e.path,
+                    selected = state.isSel(e.path),
                     fav = state.isFav(e.path),
                     subtitle = null,
                     dim = false,
@@ -1161,7 +1313,7 @@ private fun FolderContent(state: ExplorerState, onClick: (Entry) -> Unit, onLong
         }
         LazyColumn(state = ls, modifier = Modifier.fillMaxSize()) {
             items(entries, key = { it.path }) { e ->
-                ListItemRow(e, null, state.selected?.path == e.path, state.isFav(e.path), { onClick(e) }, { onLong(e) }, state.thumbSize)
+                ListItemRow(e, null, state.isSel(e.path), state.isFav(e.path), { onClick(e) }, { onLong(e) }, state.thumbSize)
             }
         }
     }
@@ -1177,7 +1329,7 @@ private fun ResultsList(state: ExplorerState, onClick: (Entry) -> Unit, onLong: 
     LazyColumn(Modifier.fillMaxSize()) {
         items(state.results, key = { it.path }) { e ->
             ListItemRow(
-                e, state.shortFolder(e.file), state.selected?.path == e.path, state.isFav(e.path),
+                e, state.shortFolder(e.file), state.isSel(e.path), state.isFav(e.path),
                 { onClick(e) }, { onLong(e) }, state.thumbSize,
                 highlight = tokens,
             )
@@ -1433,6 +1585,7 @@ internal fun KindVisual(e: Entry, thumbW: Int, modifier: Modifier, iconSize: Int
 fun PreviewPane(
     entry: Entry?,
     crop: Boolean,
+    enhance: Boolean = false,
     favorite: Boolean,
     onToggleFav: (Entry) -> Unit,
     onAddToSetlist: (Entry) -> Unit,
@@ -1535,8 +1688,8 @@ fun PreviewPane(
             val h = constraints.maxHeight
             when {
                 doc != null -> {
-                    val bmp by produceState<Bitmap?>(null, doc, page, w, h, crop) {
-                        value = doc.render(page, (w * 1.5f).toInt(), (h * 1.5f).toInt(), crop)
+                    val bmp by produceState<Bitmap?>(null, doc, page, w, h, crop, enhance) {
+                        value = doc.render(page, (w * 1.5f).toInt(), (h * 1.5f).toInt(), crop, enhance)
                     }
                     val b = bmp
                     if (b != null) {
@@ -1701,5 +1854,63 @@ private fun Modifier.pinchSteps(onStep: (Int) -> Unit): Modifier = pointerInput(
                 ev.changes.forEach { it.consume() }
             }
         } while (ev.changes.any { it.pressed })
+    }
+}
+
+/** Barra de título durante a seleção múltipla. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SelectionTopBar(
+    state: ExplorerState,
+    visible: List<Entry>,
+    onAddToSetlist: () -> Unit,
+    onCopy: () -> Unit,
+    onMove: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    TopAppBar(
+        navigationIcon = {
+            IconButton(onClick = { state.selection = emptySet() }) { Icon(Icons.Filled.Clear, "Sair da seleção") }
+        },
+        title = { Text("${state.selection.size} selecionado(s)") },
+        actions = {
+            if (visible.isNotEmpty()) {
+                androidx.compose.material3.TextButton(onClick = {
+                    state.selection = if (state.selection.size == visible.size) emptySet() else visible.map { it.path }.toSet()
+                }) { Text("Todos") }
+            }
+            IconButton(onClick = onAddToSetlist) {
+                Icon(painterResource(R.drawable.ic_playlist_add), "Adicionar a setlist")
+            }
+            androidx.compose.material3.TextButton(onClick = onCopy) { Text("Copiar") }
+            androidx.compose.material3.TextButton(onClick = onMove) { Text("Mover") }
+            androidx.compose.material3.TextButton(onClick = onDelete) {
+                Text("Apagar", color = MaterialTheme.colorScheme.error)
+            }
+        },
+    )
+}
+
+/** Barra "colar aqui": aparece depois de Copiar/Mover, enquanto você escolhe a pasta de destino. */
+@Composable
+private fun PasteBar(clip: ExplorerState.Clip, canPaste: Boolean, here: String, onPaste: () -> Unit, onCancel: () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.tertiaryContainer) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Text(
+                "${if (clip.move) "Mover" else "Copiar"} ${clip.paths.size} ${if (clip.paths.size == 1) "item" else "itens"}: " +
+                    "abra a pasta de destino e toque em Colar.",
+                style = MaterialTheme.typography.labelMedium,
+            )
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                androidx.compose.material3.TextButton(onClick = onCancel) { Text("Cancelar") }
+                Button(enabled = canPaste, onClick = onPaste) {
+                    Text("Colar em \"$here\"", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
     }
 }

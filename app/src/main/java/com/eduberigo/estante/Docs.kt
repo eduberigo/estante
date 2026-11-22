@@ -33,7 +33,7 @@ interface Doc {
     /** Página em que abrir (a imagem tocada, dentro da sequência da pasta). */
     val startPage: Int get() = 0
     /** crop = recorte automático das margens brancas (só na tela; o arquivo não muda). */
-    suspend fun render(index: Int, maxW: Int, maxH: Int, crop: Boolean = false): Bitmap?
+    suspend fun render(index: Int, maxW: Int, maxH: Int, crop: Boolean = false, enhance: Boolean = false): Bitmap?
     fun close()
 }
 
@@ -80,7 +80,7 @@ class PdfDoc(file: File) : Doc {
         return r
     }
 
-    override suspend fun render(index: Int, maxW: Int, maxH: Int, crop: Boolean): Bitmap? = mutex.withLock {
+    override suspend fun render(index: Int, maxW: Int, maxH: Int, crop: Boolean, enhance: Boolean): Bitmap? = mutex.withLock {
         if (closed || index !in 0 until pageCount || maxW <= 0 || maxH <= 0) return@withLock null
         withContext(Dispatchers.IO) {
             try {
@@ -88,6 +88,16 @@ class PdfDoc(file: File) : Doc {
                 try {
                     val pw = page.width.toFloat()
                     val ph = page.height.toFloat()
+                    if (enhance) {
+                        // Página inteira em resolução maior; endireita, realça e recorta depois.
+                        var s0 = minOf(maxW / pw, maxH / ph) * 1.5f
+                        val maxPixels = 14_000_000f
+                        if (pw * ph * s0 * s0 > maxPixels) s0 = kotlin.math.sqrt(maxPixels / (pw * ph))
+                        val full = Bitmap.createBitmap((pw * s0).toInt().coerceAtLeast(1), (ph * s0).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+                        full.eraseColor(Color.WHITE)
+                        page.render(full, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        return@withContext Enhance.process(full, crop)
+                    }
                     val r = if (crop) {
                         if (cropCache.containsKey(index)) cropCache[index] else detectCrop(page).also { cropCache[index] = it }
                     } else {
@@ -131,9 +141,10 @@ class PdfDoc(file: File) : Doc {
 
 class ImageDoc(private val file: File) : Doc {
     override val pageCount: Int = 1
-    override suspend fun render(index: Int, maxW: Int, maxH: Int, crop: Boolean): Bitmap? =
+    override suspend fun render(index: Int, maxW: Int, maxH: Int, crop: Boolean, enhance: Boolean): Bitmap? =
         withContext(Dispatchers.IO) {
             try {
+                if (enhance) return@withContext Enhance.process(decodeImage(file, maxW * 2, maxH * 2), crop)
                 if (!crop) return@withContext decodeImage(file, maxW, maxH)
                 val big = decodeImage(file, maxW * 2, maxH * 2)
                 val r = Crop.detect(big) ?: return@withContext big
@@ -153,8 +164,8 @@ class ImageDoc(private val file: File) : Doc {
 class MultiImageDoc(private val files: List<File>, override val startPage: Int) : Doc {
     override val pageCount: Int = files.size
     override val pageFiles: List<File> = files
-    override suspend fun render(index: Int, maxW: Int, maxH: Int, crop: Boolean): Bitmap? =
-        if (index !in files.indices) null else ImageDoc(files[index]).render(0, maxW, maxH, crop)
+    override suspend fun render(index: Int, maxW: Int, maxH: Int, crop: Boolean, enhance: Boolean): Bitmap? =
+        if (index !in files.indices) null else ImageDoc(files[index]).render(0, maxW, maxH, crop, enhance)
     override fun close() {}
 }
 
