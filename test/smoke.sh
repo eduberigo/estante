@@ -36,6 +36,24 @@ adb shell monkey -p $PKG -c android.intent.category.LAUNCHER 1
 sleep 5
 adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb pull /sdcard/ui.xml out/ui.xml
 
+# 3b) Leitor + anotação pela interface
+dump() { adb shell uiautomator dump /sdcard/u.xml >/dev/null 2>&1; adb pull /sdcard/u.xml out/ui-tmp.xml >/dev/null 2>&1; }
+adb shell am force-stop $PKG
+adb shell am start -n $PKG/.MainActivity --es abrir "/sdcard/Partituras/Casamentos/Perfect - Ed Sheeran - X - pop - G - 95.pdf"
+sleep 6
+W=$(adb shell wm size | grep -o '[0-9]*x[0-9]*' | tail -1 | cut -dx -f1); H=$(adb shell wm size | grep -o '[0-9]*x[0-9]*' | tail -1 | cut -dx -f2)
+adb shell input tap $((W/2)) $((H/2)); sleep 2; dump; cp out/ui-tmp.xml out/ui-leitor.xml
+python3 test/tap.py "Anotar" > out/anot.txt; sleep 2
+adb shell input swipe $((W/3)) $((H/3)) $((W*2/3)) $((H/2)) 600; sleep 1
+dump; python3 test/tap.py "Dedilhado" >> out/anot.txt; sleep 1
+adb shell input tap $((W/2)) $((H*2/3)); sleep 1
+dump; python3 test/tap.py "Âncora" >> out/anot.txt; sleep 1
+adb shell input tap $((W/2)) $((H/4)); sleep 2
+dump; python3 test/tap.py "Coda" >> out/anot.txt; sleep 2
+dump; python3 test/tap.py "Concluir" >> out/anot.txt; sleep 2
+dump; cp out/ui-tmp.xml out/ui-depois.xml
+adb exec-out screencap -p > out/3-anotado.png
+
 # 4) Autoteste de PDF/exportação
 adb shell am force-stop $PKG
 adb shell am start -n $PKG/.MainActivity --es selftest /sdcard/Partituras/Casamentos
@@ -46,6 +64,8 @@ grep -E "AndroidRuntime|FATAL|$PKG|estante" out/logcat-completo.txt > out/logcat
 set +x
 for f in out/install.txt out/atividade-1.txt out/atividade-2.txt; do echo "===== $f"; cat "$f"; done
 for f in out/ui1.xml out/ui2.xml out/ui.xml; do echo "===== TEXTOS $f"; grep -o 'text="[^"]*"' "$f" | grep -v 'text=""' | head -60; grep -o 'content-desc="[^"]*"' "$f" | grep -v '=""' | head -30; done
+echo "===== LEITOR"; grep -o 'text="[^"]*"' out/ui-leitor.xml | grep -v 'text=""' | head -30
+echo "===== ANOTACAO"; cat out/anot.txt; grep -o 'text="[^"]*"' out/ui-depois.xml | grep -v 'text=""' | head -30
 echo "===== AUTOTESTE"; grep -E "ESTANTE_SELFTEST" out/logcat-completo.txt; grep -E "W Estante" -A 4 out/logcat-completo.txt | head -40
 echo "===== ERROS"; grep -E "FATAL|AndroidRuntime|E/.*estante" -A 25 out/logcat-completo.txt | head -150
 echo "===== FIM"

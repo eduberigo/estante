@@ -180,7 +180,11 @@ fun App(hasPermission: Boolean, requestPermission: () -> Unit) {
     val prefs = remember { Prefs(ctx) }
     val explorer = remember { ExplorerState(prefs) }
     val lib = remember { Library(ctx) }
-    var reading by remember { mutableStateOf<Reading?>(null) }
+    val activity = LocalContext.current as MainActivity
+    var reading by remember {
+        // Usado pelo teste automático: abrir direto um arquivo no leitor.
+        mutableStateOf(activity.intent?.getStringExtra("abrir")?.let { Reading(listOf(File(it)), 0, null) })
+    }
 
     val r = reading
     if (r != null) {
