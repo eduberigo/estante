@@ -148,6 +148,27 @@ fun ReaderScreen(file: File, autoCrop: Boolean, onAutoCrop: (Boolean) -> Unit, o
             }
         }
 
+        val clock by produceState(nowText()) {
+            while (true) {
+                value = nowText()
+                kotlinx.coroutines.delay(1000L * (60 - java.util.Calendar.getInstance().get(java.util.Calendar.SECOND)).coerceAtLeast(1))
+            }
+        }
+        if (!showBars) {
+            // Relógio discreto, sempre visível.
+            Text(
+                clock,
+                color = Color.White,
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .displayCutoutPadding()
+                    .padding(8.dp)
+                    .background(Color.Black.copy(alpha = 0.45f), androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+            )
+        }
+
         if (showBars) {
             Row(
                 Modifier
@@ -169,6 +190,7 @@ fun ReaderScreen(file: File, autoCrop: Boolean, onAutoCrop: (Boolean) -> Unit, o
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
+                Text(clock, color = Color.White, modifier = Modifier.padding(horizontal = 8.dp))
                 Text(
                     "${pager.currentPage + 1} / $count",
                     color = Color.White,
@@ -281,3 +303,6 @@ private fun PageView(doc: Doc, index: Int, crop: Boolean, onTap: (Float) -> Unit
         }
     }
 }
+
+private val clockFmt = java.text.SimpleDateFormat("HH:mm", java.util.Locale("pt", "BR"))
+private fun nowText(): String = clockFmt.format(java.util.Date())

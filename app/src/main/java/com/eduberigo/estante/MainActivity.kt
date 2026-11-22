@@ -109,6 +109,11 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("grid", true)
         set(v) { sp.edit().putBoolean("grid", v).apply() }
 
+    /** 0 pequenas, 1 médias, 2 grandes, 3 enormes. */
+    var thumbSize: Int
+        get() = sp.getInt("thumbSize", 1)
+        set(v) { sp.edit().putInt("thumbSize", v).apply() }
+
     var autoCrop: Boolean
         get() = sp.getBoolean("autoCrop", true)
         set(v) { sp.edit().putBoolean("autoCrop", v).apply() }

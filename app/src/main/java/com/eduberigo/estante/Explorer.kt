@@ -110,6 +110,12 @@ import kotlin.math.abs
 
 private val FavColor = Color(0xFFFFB300)
 
+private val ThumbNames = listOf("Pequenas", "Médias", "Grandes", "Enormes")
+private val GridMin = listOf(90, 120, 170, 240)
+private val GridPx = listOf(240, 320, 460, 640)
+private val ListW = listOf(36, 44, 64, 96)
+private val ListPx = listOf(100, 130, 200, 300)
+
 /** Estado do explorador. Fica vivo enquanto o leitor está aberto, para voltar ao mesmo ponto. */
 class ExplorerState(private val prefs: Prefs) {
     /** true = tela Início (pastas escolhidas + favoritos); false = dentro de uma pasta. */
@@ -127,6 +133,14 @@ class ExplorerState(private val prefs: Prefs) {
         private set
     var favorites by mutableStateOf(prefs.favorites)
         private set
+
+    var thumbSize by mutableIntStateOf(prefs.thumbSize)
+        private set
+
+    fun updateThumbSize(v: Int) {
+        thumbSize = v.coerceIn(0, 3)
+        prefs.thumbSize = thumbSize
+    }
 
     var autoCrop by mutableStateOf(prefs.autoCrop)
         private set
@@ -456,6 +470,20 @@ fun ExplorerScreen(state: ExplorerState, onOpen: (File) -> Unit) {
                                         leadingIcon = { Icon(painterResource(R.drawable.ic_crop), null) },
                                         onClick = { menuOpen = false; state.updateAutoCrop(!state.autoCrop) },
                                     )
+                                    HorizontalDivider()
+                                    Text(
+                                        "Tamanho das miniaturas",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                    )
+                                    ThumbNames.forEachIndexed { i, name ->
+                                        DropdownMenuItem(
+                                            text = { Text((if (state.thumbSize == i) "● " else "○ ") + name) },
+                                            onClick = { state.updateThumbSize(i) },
+                                        )
+                                    }
+                                    HorizontalDivider()
                                     DropdownMenuItem(
                                         text = { Text("Atualizar") },
                                         onClick = { menuOpen = false; state.reloadTick++ },
@@ -570,7 +598,7 @@ private fun SplitLayout(
     preview: @Composable () -> Unit,
     browser: @Composable () -> Unit,
 ) {
-    val frac by rememberUpdatedState(fraction.coerceIn(0.2f, 0.85f))
+    val frac by rememberUpdatedState(fraction.coerceIn(0.15f, 0.92f))
     val setFrac by rememberUpdatedState(onFraction)
     val done by rememberUpdatedState(onDone)
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -585,7 +613,7 @@ private fun SplitLayout(
                         detectDragGestures(onDragEnd = { done() }, onDragCancel = { done() }) { change, amount ->
                             change.consume()
                             val d = if (portrait) amount.y / total else -amount.x / total
-                            setFrac((frac + d).coerceIn(0.2f, 0.85f))
+                            setFrac((frac + d).coerceIn(0.15f, 0.92f))
                         }
                     },
                 contentAlignment = Alignment.Center,
@@ -769,7 +797,7 @@ private fun HomeContent(
     val gs = remember { LazyGridState(state.scrollMem["#home"] ?: 0) }
     DisposableEffect(gs) { onDispose { state.scrollMem["#home"] = gs.firstVisibleItemIndex } }
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(120.dp),
+        columns = GridCells.Adaptive(GridMin[state.thumbSize].dp),
         state = gs,
         contentPadding = PaddingValues(6.dp),
         modifier = Modifier.fillMaxSize(),
@@ -794,6 +822,7 @@ private fun HomeContent(
                 dim = !e.file.isDirectory,
                 onClick = { onClick(e) },
                 onLong = { onLong(e) },
+                thumbPx = GridPx[state.thumbSize],
             )
         }
 
@@ -816,6 +845,7 @@ private fun HomeContent(
                 dim = !e.file.exists(),
                 onClick = { onClick(e) },
                 onLong = { onLong(e) },
+                thumbPx = GridPx[state.thumbSize],
             )
         }
 
@@ -880,7 +910,7 @@ private fun FolderContent(state: ExplorerState, onClick: (Entry) -> Unit, onLong
             }
         }
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(120.dp),
+            columns = GridCells.Adaptive(GridMin[state.thumbSize].dp),
             state = gs,
             contentPadding = PaddingValues(6.dp),
             modifier = Modifier.fillMaxSize(),
@@ -896,6 +926,7 @@ private fun FolderContent(state: ExplorerState, onClick: (Entry) -> Unit, onLong
                     onClick = { onClick(e) },
                     onLong = { onLong(e) },
                     pinnedMark = e.kind == Kind.DIR && state.isPinned(e.path),
+                    thumbPx = GridPx[state.thumbSize],
                 )
             }
         }
@@ -912,7 +943,7 @@ private fun FolderContent(state: ExplorerState, onClick: (Entry) -> Unit, onLong
         }
         LazyColumn(state = ls, modifier = Modifier.fillMaxSize()) {
             items(entries, key = { it.path }) { e ->
-                ListItemRow(e, null, state.selected?.path == e.path, state.isFav(e.path), { onClick(e) }, { onLong(e) })
+                ListItemRow(e, null, state.selected?.path == e.path, state.isFav(e.path), { onClick(e) }, { onLong(e) }, state.thumbSize)
             }
         }
     }
@@ -924,7 +955,7 @@ private fun ResultsList(state: ExplorerState, onClick: (Entry) -> Unit, onLong: 
         items(state.results, key = { it.path }) { e ->
             ListItemRow(
                 e, state.shortFolder(e.file), state.selected?.path == e.path, state.isFav(e.path),
-                { onClick(e) }, { onLong(e) },
+                { onClick(e) }, { onLong(e) }, state.thumbSize,
             )
         }
     }
@@ -943,6 +974,7 @@ private fun GridItem(
     label: String = e.title,
     icon: Int? = null,
     pinnedMark: Boolean = false,
+    thumbPx: Int = 320,
 ) {
     val bg = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent
     Column(
@@ -965,7 +997,7 @@ private fun GridItem(
             if (icon != null) {
                 Icon(painterResource(icon), null, Modifier.size(56.dp), tint = MaterialTheme.colorScheme.primary)
             } else {
-                KindVisual(e, 320, Modifier.fillMaxSize(), iconSize = 56)
+                KindVisual(e, thumbPx, Modifier.fillMaxSize(), iconSize = 56)
             }
             if (fav) {
                 Icon(
@@ -1010,6 +1042,7 @@ private fun ListItemRow(
     fav: Boolean,
     onClick: () -> Unit,
     onLong: () -> Unit,
+    size: Int = 1,
 ) {
     val bg = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent
     Row(
@@ -1022,12 +1055,12 @@ private fun ListItemRow(
     ) {
         Box(
             Modifier
-                .size(width = 40.dp, height = 52.dp)
+                .size(width = ListW[size].dp, height = (ListW[size] * 1.32f).dp)
                 .clip(RoundedCornerShape(3.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant),
             contentAlignment = Alignment.Center,
         ) {
-            KindVisual(e, 120, Modifier.fillMaxSize(), iconSize = 26)
+            KindVisual(e, ListPx[size], Modifier.fillMaxSize(), iconSize = 26)
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
