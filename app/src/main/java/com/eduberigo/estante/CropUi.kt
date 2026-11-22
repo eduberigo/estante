@@ -74,7 +74,7 @@ fun CropEditor(
                 val wPx = constraints.maxWidth
                 val hPx = constraints.maxHeight
                 val bmp by produceState<Bitmap?>(null, doc, index) {
-                    val b = doc.render(index, wPx, hPx, false, false, null)
+                    val b = doc.render(index, wPx, hPx, false, null, null)
                     value = b
                     if (rect == null && b != null) rect = Crop.detect(b) ?: RectF(0.03f, 0.03f, 0.97f, 0.97f)
                 }
