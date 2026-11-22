@@ -114,6 +114,9 @@ object SearchIndex {
             .flatMap { dirs[it].orEmpty() }.distinct().map { File(it) }
     }
 
+    /** Todos os caminhos indexados (para navegar por artista, título, gênero, tom). */
+    fun allPaths(): List<String> = items.map { it.path }
+
     /** Todas as palavras precisam aparecer no caminho (pasta + nome), sem acento. */
     fun search(query: String, limit: Int = 400): List<Entry> {
         val tokens = Fs.norm(query).split(' ', '\t').filter { it.isNotBlank() }

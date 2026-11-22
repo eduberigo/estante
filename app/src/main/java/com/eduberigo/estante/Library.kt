@@ -213,6 +213,28 @@ object Meta {
         "forro", "forró", "sertanejo", "tango", "bolero", "valsa", "waltz", "ballad",
     )
 
+    data class Info(val artist: String?, val title: String, val genre: String?, val key: String?, val bpm: Int?)
+
+    private fun normKey(p: String): String {
+        val t = p.trim().replace("♯", "#").replace("♭", "b")
+        val k = t.substring(0, 1).uppercase() + t.substring(1)
+        return k.replace("menor", "m").replace("min", "m").replace("maior", "").replace("maj", "")
+    }
+
+    /** Artista, título, gênero, tom e BPM tirados do nome do arquivo (estimativa). */
+    fun info(name: String): Info {
+        val n = name.replace(leadingId, "").replace(trailingCopy, "").trim()
+        val raw = if (n.contains(" - ")) n.split(" - ").map { it.trim() }.filter { it.isNotEmpty() } else listOf(n)
+        val key = raw.firstOrNull { keyRe.matches(it) }?.let { normKey(it) }
+        val bpm = bpmOf(n)
+        val genre = raw.firstOrNull { p ->
+            val low = p.lowercase()
+            low in genres || low.startsWith("brasil ") || low.startsWith("jazz ")
+        }?.lowercase()
+        val g = guess(name)
+        return Info(g.artist, g.title, genre, key, bpm)
+    }
+
     /** BPM escrito no nome do arquivo (ex.: "... - 95.pdf" ou "95 bpm"), se houver. */
     fun bpmOf(name: String): Int? =
         name.split(" - ").map { it.trim() }.firstNotNullOfOrNull { p ->

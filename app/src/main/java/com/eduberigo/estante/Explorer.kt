@@ -205,9 +205,26 @@ class ExplorerState(private val prefs: Prefs) {
     var openSetlist by mutableStateOf<String?>(null)
         private set
 
+    /** Dentro de uma pasta de verdade (não Início, setlist nem navegação por artista…). */
+    val inFolder: Boolean get() = !atHome && openSetlist == null && browse == null
+
+    /** Navegar por artista/título/gênero/tom; browseGroup = grupo aberto (ex.: "Tom Jobim"). */
+    var browse by mutableStateOf<BrowseKind?>(null)
+        private set
+    var browseGroup by mutableStateOf<String?>(null)
+
+    fun openBrowse(k: BrowseKind) {
+        selected = null
+        openSetlist = null
+        browse = k
+        browseGroup = null
+        atHome = false
+    }
+
     fun openSet(id: String) {
         selected = null
         openSetlist = id
+        browse = null
         atHome = false
     }
 
@@ -239,12 +256,14 @@ class ExplorerState(private val prefs: Prefs) {
         dir = to
         atHome = false
         openSetlist = null
+        browse = null
     }
 
     fun goHome() {
         selected = null
         atHome = true
         openSetlist = null
+        browse = null
     }
 
     fun toggleGrid() {
@@ -419,6 +438,8 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
             state.searching -> state.closeSearch()
             state.atHome -> Unit
             state.openSetlist != null -> state.goHome()
+            state.browse != null && state.browseGroup != null -> state.browseGroup = null
+            state.browse != null -> state.goHome()
             state.isPinned(state.dir.absolutePath) || atVolumeRoot -> state.goHome()
             else -> state.dir.parentFile?.let { state.navigate(it) } ?: state.goHome()
         }
@@ -505,6 +526,11 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                         when {
                             state.searching -> SearchField(state)
                             state.atHome -> Text("Início")
+                            state.browse != null -> Text(
+                                state.browseGroup ?: "Por ${state.browse!!.label.lowercase()}",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                             state.openSetlist != null -> {
                                 val id = state.openSetlist!!
                                 Text(
@@ -550,7 +576,7 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                             IconButton(onClick = { state.searching = true }) {
                                 Icon(Icons.Filled.Search, "Buscar")
                             }
-                            if (!state.atHome && state.openSetlist == null) {
+                            if (state.inFolder) {
                                 val here = state.dir.absolutePath
                                 IconButton(onClick = { state.toggleFav(here) }) {
                                     Icon(
@@ -570,7 +596,7 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                                 tint = if (previewOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        if (!state.searching && !state.atHome && state.openSetlist == null) {
+                        if (!state.searching && state.inFolder) {
                             IconButton(onClick = { state.toggleGrid() }) {
                                 if (state.grid) {
                                     Icon(Icons.AutoMirrored.Filled.List, "Ver em lista")
@@ -585,7 +611,7 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                                     Icon(Icons.Filled.MoreVert, "Mais")
                                 }
                                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                                    if (!state.atHome && state.openSetlist == null) {
+                                    if (state.inFolder) {
                                         val here = state.dir.absolutePath
                                         val pinnedHere = state.isPinned(here)
                                         DropdownMenuItem(
@@ -667,9 +693,9 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                     Column(Modifier.fillMaxSize()) {
                         when {
                             state.searching -> SearchInfo(state, roots)
-                            !state.atHome && state.openSetlist == null -> Breadcrumbs(state.dir, volumes) { state.navigate(it) }
+                            state.inFolder -> Breadcrumbs(state.dir, volumes) { state.navigate(it) }
                         }
-                        if (state.loading && !state.searching && !state.atHome && state.openSetlist == null) {
+                        if (state.loading && !state.searching && state.inFolder) {
                             LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
                         }
                         Box(
@@ -684,10 +710,19 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                                     state, lib, pinnedEntries, favEntries, volumes, ::click, ::longClick,
                                     onOpenSetlist = { state.openSet(it) },
                                     onNewSetlist = { newSetlist = true },
+                                    onBrowse = { state.openBrowse(it) },
                                     onAddFolder = {
                                         state.pickingFolder = true
                                         state.navigate(volumes.first().dir)
                                     },
+                                )
+                                state.browse != null -> BrowseContent(
+                                    state = state,
+                                    kind = state.browse!!,
+                                    group = state.browseGroup,
+                                    onGroup = { state.browseGroup = it },
+                                    onClick = ::click,
+                                    onLong = ::longClick,
                                 )
                                 state.openSetlist != null -> SetlistContent(
                                     state = state,
@@ -722,7 +757,7 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                         if (c != null && !state.searching) {
                             PasteBar(
                                 clip = c,
-                                canPaste = !state.atHome && state.openSetlist == null,
+                                canPaste = state.inFolder,
                                 here = state.dir.name,
                                 onPaste = {
                                     val dest = state.dir
@@ -744,7 +779,7 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                                 onCancel = { state.clip = null },
                             )
                         }
-                        if (state.pickingFolder && !state.atHome && state.openSetlist == null && !state.searching) {
+                        if (state.pickingFolder && state.inFolder && !state.searching) {
                             PickFolderBar(
                                 state = state,
                                 volumes = volumes,
@@ -1106,6 +1141,7 @@ private fun HomeContent(
     onOpenSetlist: (String) -> Unit,
     onNewSetlist: () -> Unit,
     onAddFolder: () -> Unit,
+    onBrowse: (BrowseKind) -> Unit,
 ) {
     val gs = remember { LazyGridState(state.scrollMem["#home"] ?: 0) }
     val autos = remember(lib.history) { lib.autoSetlists() }
@@ -1197,6 +1233,22 @@ private fun HomeContent(
                 onClick = onAddFolder,
                 onLong = onAddFolder,
                 icon = R.drawable.ic_add,
+            )
+        }
+
+        item(span = { GridItemSpan(maxLineSpan) }, key = "h-nav") { SectionHeader("Navegar por") }
+        items(BrowseKind.entries.size, key = { "b:" + BrowseKind.entries[it].name }) { i ->
+            val k = BrowseKind.entries[i]
+            GridItem(
+                e = Entry(File(k.name), Kind.OTHER, 0L, 0L),
+                label = k.plural,
+                selected = false,
+                fav = false,
+                subtitle = "pelo nome do arquivo",
+                dim = false,
+                onClick = { onBrowse(k) },
+                onLong = { onBrowse(k) },
+                icon = R.drawable.ic_setlist,
             )
         }
 
