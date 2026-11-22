@@ -46,7 +46,7 @@ grep -E "AndroidRuntime|FATAL|$PKG|estante" out/logcat-completo.txt > out/logcat
 set +x
 for f in out/install.txt out/atividade-1.txt out/atividade-2.txt; do echo "===== $f"; cat "$f"; done
 for f in out/ui1.xml out/ui2.xml out/ui.xml; do echo "===== TEXTOS $f"; grep -o 'text="[^"]*"' "$f" | grep -v 'text=""' | head -60; grep -o 'content-desc="[^"]*"' "$f" | grep -v '=""' | head -30; done
-echo "===== AUTOTESTE"; grep -E "ESTANTE_SELFTEST|W Estante" -A 12 out/logcat-completo.txt | head -60
+echo "===== AUTOTESTE"; grep -E "ESTANTE_SELFTEST" out/logcat-completo.txt; grep -E "W Estante" -A 4 out/logcat-completo.txt | head -40
 echo "===== ERROS"; grep -E "FATAL|AndroidRuntime|E/.*estante" -A 25 out/logcat-completo.txt | head -150
 echo "===== FIM"
 exit 0
