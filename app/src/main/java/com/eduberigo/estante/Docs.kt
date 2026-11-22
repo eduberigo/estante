@@ -32,6 +32,8 @@ interface Doc {
     val pageFiles: List<File>? get() = null
     /** Página em que abrir (a imagem tocada, dentro da sequência da pasta). */
     val startPage: Int get() = 0
+    /** Que parte da página (frações 0..1) o último render dessa página mostrou. Usado pelas anotações. */
+    fun shownRect(index: Int): RectF = RectF(0f, 0f, 1f, 1f)
     /** crop = recorte automático das margens brancas (só na tela; o arquivo não muda). */
     suspend fun render(index: Int, maxW: Int, maxH: Int, crop: Boolean = false, enhance: Boolean = false): Bitmap?
     fun close()
@@ -68,6 +70,8 @@ class PdfDoc(file: File) : Doc {
     override val pageCount: Int = renderer.pageCount
 
     private val cropCache = HashMap<Int, RectF?>()
+    private val shown = java.util.concurrent.ConcurrentHashMap<Int, RectF>()
+    override fun shownRect(index: Int): RectF = shown[index] ?: RectF(0f, 0f, 1f, 1f)
 
     private fun detectCrop(page: PdfRenderer.Page): RectF? {
         val w = 360
@@ -96,13 +100,16 @@ class PdfDoc(file: File) : Doc {
                         val full = Bitmap.createBitmap((pw * s0).toInt().coerceAtLeast(1), (ph * s0).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
                         full.eraseColor(Color.WHITE)
                         page.render(full, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                        return@withContext Enhance.process(full, crop)
+                        val (eb, er) = Enhance.processR(full, crop)
+                        shown[index] = er
+                        return@withContext eb
                     }
                     val r = if (crop) {
                         if (cropCache.containsKey(index)) cropCache[index] else detectCrop(page).also { cropCache[index] = it }
                     } else {
                         null
                     }
+                    shown[index] = r ?: RectF(0f, 0f, 1f, 1f)
                     val cx = (r?.left ?: 0f) * pw
                     val cy = (r?.top ?: 0f) * ph
                     val cw = ((r?.width() ?: 1f) * pw).coerceAtLeast(1f)
@@ -142,13 +149,21 @@ class PdfDoc(file: File) : Doc {
 
 class ImageDoc(private val file: File) : Doc {
     override val pageCount: Int = 1
+    @Volatile private var shown = RectF(0f, 0f, 1f, 1f)
+    override fun shownRect(index: Int): RectF = shown
     override suspend fun render(index: Int, maxW: Int, maxH: Int, crop: Boolean, enhance: Boolean): Bitmap? =
         withContext(Dispatchers.IO) {
             try {
-                if (enhance) return@withContext Enhance.process(decodeImage(file, maxW * 2, maxH * 2), crop)
+                if (enhance) {
+                    val (eb, er) = Enhance.processR(decodeImage(file, maxW * 2, maxH * 2), crop)
+                    shown = er
+                    return@withContext eb
+                }
+                shown = RectF(0f, 0f, 1f, 1f)
                 if (!crop) return@withContext decodeImage(file, maxW, maxH)
                 val big = decodeImage(file, maxW * 2, maxH * 2)
                 val r = Crop.detect(big) ?: return@withContext big
+                shown = RectF(r)
                 val x = (r.left * big.width).toInt()
                 val y = (r.top * big.height).toInt()
                 val w = (r.width() * big.width).toInt().coerceIn(1, big.width - x)
@@ -165,8 +180,15 @@ class ImageDoc(private val file: File) : Doc {
 class MultiImageDoc(private val files: List<File>, override val startPage: Int) : Doc {
     override val pageCount: Int = files.size
     override val pageFiles: List<File> = files
-    override suspend fun render(index: Int, maxW: Int, maxH: Int, crop: Boolean, enhance: Boolean): Bitmap? =
-        if (index !in files.indices) null else ImageDoc(files[index]).render(0, maxW, maxH, crop, enhance)
+    private val shown = java.util.concurrent.ConcurrentHashMap<Int, RectF>()
+    override fun shownRect(index: Int): RectF = shown[index] ?: RectF(0f, 0f, 1f, 1f)
+    override suspend fun render(index: Int, maxW: Int, maxH: Int, crop: Boolean, enhance: Boolean): Bitmap? {
+        if (index !in files.indices) return null
+        val d = ImageDoc(files[index])
+        val b = d.render(0, maxW, maxH, crop, enhance)
+        shown[index] = d.shownRect(0)
+        return b
+    }
     override fun close() {}
 }
 

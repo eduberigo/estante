@@ -42,6 +42,7 @@ fun PrepareFilesDialog(
     onDone: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    val ctx = androidx.compose.ui.platform.LocalContext.current
     val files = remember(paths) { paths.map { File(it) }.filter { it.isFile && Fs.kindOf(it) in setOf(Kind.PDF, Kind.IMAGE) } }
     var crop by remember { mutableStateOf(state.autoCrop) }
     var replace by remember { mutableStateOf(false) }
@@ -132,6 +133,7 @@ fun PrepareFilesDialog(
                                 }
                             }
                             lib.relink(links)
+                            AnnStore.relink(ctx, links)
                             state.relink(links)
                             state.reloadTick++
                             running = false

@@ -737,6 +737,7 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                                     scope.launch {
                                         val r = if (c.move) FileOps.move(c.paths, dest) else FileOps.copy(c.paths, dest)
                                         lib.relink(r.moved)
+                                        AnnStore.relink(ctx, r.moved)
                                         state.relink(r.moved)
                                         state.reloadTick++
                                         Toast.makeText(

@@ -62,6 +62,15 @@ object SelfTest {
                 val r2 = Export.separate(ctx, s)
                 Log.i(tag, "separados ok ${r2.files.size} pulados=${r2.skipped}")
                 Log.i(tag, "txt ${Export.txt(s).length()}")
+                pdfs.firstOrNull()?.let { f ->
+                    val n = FileNotes()
+                        .add(0, Ann("pen", -65536, 0.0035f, listOf(0.1f, 0.1f, 0.2f, 0.2f)))
+                        .add(1, Ann("finger", -16777216, 0.03f, listOf(0.5f, 0.5f), "3"))
+                        .copy(anchors = listOf(Anchor("Coda", 1, 0.1f, 0.6f)), jumps = listOf(Jump("Coda", 0, 0.9f, 0.9f)))
+                    AnnStore.save(ctx, f.absolutePath, n)
+                    val back = AnnStore.load(ctx, f.absolutePath)
+                    Log.i(tag, "anotacoes ok=${back == n} paginas=${back.pages.keys} ancoras=${back.anchors.size}")
+                }
                 Log.i(tag, "FIM OK")
             } catch (e: Throwable) {
                 Log.e(tag, "FALHOU", e)

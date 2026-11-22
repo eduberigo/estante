@@ -17,7 +17,11 @@ import kotlin.math.tan
  * Curvatura (página escaneada com o livro aberto) não é corrigida.
  */
 object Enhance {
-    fun process(src: Bitmap, crop: Boolean): Bitmap {
+    fun process(src: Bitmap, crop: Boolean): Bitmap = processR(src, crop).first
+
+    /** Igual a [process], mas também devolve a área da página mostrada (frações). */
+    fun processR(src: Bitmap, crop: Boolean): Pair<Bitmap, android.graphics.RectF> {
+        var shown = android.graphics.RectF(0f, 0f, 1f, 1f)
         var b = src
         val a = skewAngle(b)
         if (abs(a) >= 0.15f) b = rotate(b, a)
@@ -28,10 +32,14 @@ object Enhance {
                 val y = (r.top * b.height).toInt()
                 val w = (r.width() * b.width).toInt().coerceIn(1, b.width - x)
                 val h = (r.height() * b.height).toInt().coerceIn(1, b.height - y)
+                shown = android.graphics.RectF(
+                    x.toFloat() / b.width, y.toFloat() / b.height,
+                    (x + w).toFloat() / b.width, (y + h).toFloat() / b.height,
+                )
                 b = Bitmap.createBitmap(b, x, y, w, h)
             }
         }
-        return b
+        return b to shown
     }
 
     private fun lum(c: Int): Int =
