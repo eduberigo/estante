@@ -361,6 +361,7 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
     var addToSetlist by remember { mutableStateOf<String?>(null) }
     var addToSetlistMany by remember { mutableStateOf<List<String>?>(null) }
     var confirmDelete by remember { mutableStateOf<List<String>?>(null) }
+    var prepare by remember { mutableStateOf<List<String>?>(null) }
     var newSetlist by remember { mutableStateOf(false) }
     var setItem by remember { mutableStateOf<Pair<Entry, Int>?>(null) }
 
@@ -504,6 +505,7 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                             if (state.searching) state.closeSearch()
                         },
                         onDelete = { confirmDelete = state.selection.toList() },
+                        onPrepare = { prepare = state.selection.toList() },
                     )
                 } else TopAppBar(
                     title = {
@@ -821,6 +823,9 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
         addToSetlistMany?.let { ps ->
             AddToSetlistDialog(lib, ps) { addToSetlistMany = null; state.selection = emptySet() }
         }
+        prepare?.let { ps ->
+            PrepareFilesDialog(ps, volumes, lib, state) { prepare = null; state.selection = emptySet() }
+        }
         confirmDelete?.let { ps ->
             androidx.compose.material3.AlertDialog(
                 onDismissRequest = { confirmDelete = null },
@@ -874,6 +879,7 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                 state = state,
                 onSelect = if (!state.atHome || state.searching) ({ actionsEntry = null; state.selection = setOf(e.path) }) else null,
                 onAddToSetlist = if (e.kind != Kind.DIR) ({ actionsEntry = null; addToSetlist = e.path }) else null,
+                onPrepare = if (e.kind == Kind.PDF || e.kind == Kind.IMAGE) ({ actionsEntry = null; prepare = listOf(e.path) }) else null,
                 onDismiss = { actionsEntry = null },
                 onShowFolder = if (showFolderAction && e.kind != Kind.DIR) ({ actionsEntry = null; showInFolder(e.file) }) else null,
             )
@@ -951,6 +957,7 @@ private fun ActionsDialog(
     state: ExplorerState,
     onSelect: (() -> Unit)?,
     onAddToSetlist: (() -> Unit)?,
+    onPrepare: (() -> Unit)?,
     onDismiss: () -> Unit,
     onShowFolder: (() -> Unit)?,
 ) {
@@ -987,6 +994,7 @@ private fun ActionsDialog(
                     if (i < state.pinned.lastIndex) ActionRow("Mover para depois") { state.movePin(e.path, 1); onDismiss() }
                 }
                 if (onAddToSetlist != null) ActionRow("Adicionar a setlist…") { onAddToSetlist() }
+                if (onPrepare != null) ActionRow("Aplicar modo legível ao arquivo…") { onPrepare() }
                 if (onShowFolder != null) ActionRow("Mostrar na pasta") { onShowFolder() }
             }
         }
@@ -1867,6 +1875,7 @@ private fun SelectionTopBar(
     onCopy: () -> Unit,
     onMove: () -> Unit,
     onDelete: () -> Unit,
+    onPrepare: () -> Unit,
 ) {
     TopAppBar(
         navigationIcon = {
@@ -1884,6 +1893,7 @@ private fun SelectionTopBar(
             }
             androidx.compose.material3.TextButton(onClick = onCopy) { Text("Copiar") }
             androidx.compose.material3.TextButton(onClick = onMove) { Text("Mover") }
+            androidx.compose.material3.TextButton(onClick = onPrepare) { Text("Legível") }
             androidx.compose.material3.TextButton(onClick = onDelete) {
                 Text("Apagar", color = MaterialTheme.colorScheme.error)
             }

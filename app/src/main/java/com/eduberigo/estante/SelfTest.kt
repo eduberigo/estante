@@ -43,6 +43,16 @@ object SelfTest {
                     val fixed = Enhance.rotate(bmp, a)
                     Log.i(tag, "torta ${f.name}: angulo=$a depois=${Enhance.skewAngle(fixed)}")
                 }
+                pdfs.firstOrNull()?.let { f ->
+                    val o = File(ctx.cacheDir, "legivel.pdf")
+                    Export.enhanceFile(f, o, true) { _, _ -> }
+                    Log.i(tag, "arquivo legivel pdf bytes=${o.length()}")
+                }
+                imgs.firstOrNull { it.name.startsWith("torta") }?.let { f ->
+                    val o = File(ctx.cacheDir, "legivel.jpg")
+                    Export.enhanceFile(f, o, true) { _, _ -> }
+                    Log.i(tag, "arquivo legivel img bytes=${o.length()}")
+                }
                 val out = File(ctx.cacheDir, "teste-imagens.pdf")
                 Export.imagesToPdf(imgs, out)
                 Log.i(tag, "imagesToPdf ok bytes=${out.length()}")

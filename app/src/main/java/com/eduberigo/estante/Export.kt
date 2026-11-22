@@ -65,6 +65,45 @@ object Export {
 
     data class Result(val files: List<File>, val skipped: List<String>)
 
+    /**
+     * Grava o modo legível no arquivo (página endireitada, fundo limpo, traço reforçado; recorte opcional).
+     * PDF vira PDF de imagens; imagem vira JPG. A saída vai para [out].
+     */
+    suspend fun enhanceFile(src: File, out: File, crop: Boolean, progress: (Int, Int) -> Unit) = withContext(Dispatchers.IO) {
+        when (Fs.kindOf(src)) {
+            Kind.PDF -> {
+                val pdf = PdfDoc(src)
+                try {
+                    newDoc().use { doc ->
+                        for (i in 0 until pdf.pageCount) {
+                            progress(i + 1, pdf.pageCount)
+                            val bmp = pdf.render(i, 1600, 2260, crop, true)
+                                ?: throw IllegalStateException("página ${i + 1} não renderizou")
+                            val w = 595f
+                            val h = w * bmp.height / bmp.width
+                            val page = PDPage(PDRectangle(w, h))
+                            doc.addPage(page)
+                            val x = JPEGFactory.createFromImage(doc, bmp, 0.92f)
+                            PDPageContentStream(doc, page).use { cs -> cs.drawImage(x, 0f, 0f, w, h) }
+                            bmp.recycle()
+                        }
+                        doc.save(out)
+                    }
+                } finally {
+                    pdf.close()
+                }
+            }
+            Kind.IMAGE -> {
+                progress(1, 1)
+                val bmp = ImageDoc(src).render(0, 1600, 2260, crop, true)
+                    ?: throw IllegalStateException("imagem não abriu")
+                out.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 92, it) }
+                bmp.recycle()
+            }
+            else -> throw IllegalArgumentException("tipo não suportado")
+        }
+    }
+
     /** Um PDF por música: "01 - Nome.pdf". */
     suspend fun separate(ctx: Context, s: Setlist): Result = withContext(Dispatchers.IO) {
         val dir = exportDir(s.name)
