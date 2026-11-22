@@ -37,6 +37,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import java.io.File
 
 class MainActivity : ComponentActivity() {
@@ -197,29 +200,50 @@ fun App(hasPermission: Boolean, requestPermission: () -> Unit) {
     }
 
     val r = reading
-    if (r != null) {
-        BackHandler { reading = null }
-        androidx.compose.runtime.key(r.files[r.index].absolutePath, r.index) {
-            ReaderScreen(
-                file = r.files[r.index],
-                setlistName = r.title,
-                position = if (r.files.size > 1) r.index to r.files.size else null,
-                startAtEnd = r.startAtEnd,
-                onNextSong = if (r.index < r.files.lastIndex) ({ reading = r.copy(index = r.index + 1, startAtEnd = false) }) else null,
-                onPrevSong = if (r.index > 0) ({ atEnd: Boolean -> reading = r.copy(index = r.index - 1, startAtEnd = atEnd) }) else null,
-                onPlayed = { f, secs -> lib.recordPlay(f.absolutePath, secs) },
-                lib = lib,
-                autoCrop = explorer.autoCrop,
-                onAutoCrop = { explorer.updateAutoCrop(it) },
-                onClose = { reading = null },
-            )
-        }
-    } else {
+    // A tela de arquivos continua montada por baixo do leitor: ao voltar, a lista está na mesma posição.
+    androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
         val d = androidx.compose.ui.platform.LocalDensity.current
-        androidx.compose.runtime.CompositionLocalProvider(
-            androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(d.density, d.fontScale * explorer.textScale),
+        androidx.compose.foundation.layout.Box(
+            Modifier
+                .fillMaxSize()
+                .then(if (r != null) Modifier.clearAndSetSemantics { } else Modifier)
         ) {
-            ExplorerScreen(explorer, lib, onOpen = { files, i, title -> reading = Reading(files, i, title) })
+            androidx.compose.runtime.CompositionLocalProvider(
+                androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(d.density, d.fontScale * explorer.textScale),
+            ) {
+                ExplorerScreen(explorer, lib, onOpen = { files, i, title -> reading = Reading(files, i, title) })
+            }
+        }
+        if (r != null) {
+            BackHandler { reading = null }
+            androidx.compose.foundation.layout.Box(
+                Modifier
+                    .fillMaxSize()
+                    // Nenhum toque atravessa o leitor até a lista de baixo.
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                awaitPointerEvent(PointerEventPass.Final).changes.forEach { it.consume() }
+                            }
+                        }
+                    }
+            ) {
+                androidx.compose.runtime.key(r.files[r.index].absolutePath, r.index) {
+                    ReaderScreen(
+                        file = r.files[r.index],
+                        setlistName = r.title,
+                        position = if (r.files.size > 1) r.index to r.files.size else null,
+                        startAtEnd = r.startAtEnd,
+                        onNextSong = if (r.index < r.files.lastIndex) ({ reading = r.copy(index = r.index + 1, startAtEnd = false) }) else null,
+                        onPrevSong = if (r.index > 0) ({ atEnd: Boolean -> reading = r.copy(index = r.index - 1, startAtEnd = atEnd) }) else null,
+                        onPlayed = { f, secs -> lib.recordPlay(f.absolutePath, secs) },
+                        lib = lib,
+                        autoCrop = explorer.autoCrop,
+                        onAutoCrop = { explorer.updateAutoCrop(it) },
+                        onClose = { reading = null },
+                    )
+                }
+            }
         }
     }
 }
