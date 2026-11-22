@@ -28,6 +28,10 @@ val AppScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 /** Algo que tem páginas para desenhar: um PDF ou uma imagem (1 página). */
 interface Doc {
     val pageCount: Int
+    /** Para imagens: cada página é um arquivo da mesma pasta (páginas de um songbook). */
+    val pageFiles: List<File>? get() = null
+    /** Página em que abrir (a imagem tocada, dentro da sequência da pasta). */
+    val startPage: Int get() = 0
     /** crop = recorte automático das margens brancas (só na tela; o arquivo não muda). */
     suspend fun render(index: Int, maxW: Int, maxH: Int, crop: Boolean = false): Bitmap?
     fun close()
@@ -36,7 +40,13 @@ interface Doc {
 fun openDoc(f: File): Doc? = try {
     when (Fs.kindOf(f)) {
         Kind.PDF -> PdfDoc(f)
-        Kind.IMAGE -> ImageDoc(f)
+        Kind.IMAGE -> {
+            val sib = f.parentFile?.listFiles()
+                ?.filter { it.isFile && !it.name.startsWith(".") && Fs.kindOf(it, false) == Kind.IMAGE }
+                ?.sortedWith(Comparator { a, b -> NaturalOrder.compare(a.name, b.name) })
+                .orEmpty()
+            if (sib.size > 1 && f in sib) MultiImageDoc(sib, sib.indexOf(f)) else ImageDoc(f)
+        }
         else -> null
     }
 } catch (e: Throwable) {
@@ -136,6 +146,15 @@ class ImageDoc(private val file: File) : Doc {
                 null
             }
         }
+    override fun close() {}
+}
+
+/** As imagens de uma pasta, em ordem, como se fossem páginas de um mesmo documento. */
+class MultiImageDoc(private val files: List<File>, override val startPage: Int) : Doc {
+    override val pageCount: Int = files.size
+    override val pageFiles: List<File> = files
+    override suspend fun render(index: Int, maxW: Int, maxH: Int, crop: Boolean): Bitmap? =
+        if (index !in files.indices) null else ImageDoc(files[index]).render(0, maxW, maxH, crop)
     override fun close() {}
 }
 

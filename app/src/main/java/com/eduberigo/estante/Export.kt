@@ -1,0 +1,173 @@
+package com.eduberigo.estante
+
+import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.os.Environment
+import androidx.core.content.FileProvider
+import com.tom_roush.pdfbox.multipdf.PDFMergerUtility
+import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.pdmodel.PDPage
+import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
+import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
+import com.tom_roush.pdfbox.pdmodel.graphics.image.JPEGFactory
+import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageFitDestination
+import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.outline.PDDocumentOutline
+import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem
+import com.tom_roush.pdfbox.io.MemoryUsageSetting
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
+
+/** Gera PDFs e textos a partir de setlists e de imagens. Os originais nunca são alterados. */
+object Export {
+    /** Pasta de saída: Documentos/Estante/<nome>. */
+    fun exportDir(name: String): File {
+        val base = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "Estante")
+        return File(base, safe(name)).apply { mkdirs() }
+    }
+
+    fun safe(name: String): String =
+        name.replace(Regex("[\\\\/:*?\"<>|]"), "-").trim().ifEmpty { "Sem nome" }.take(120)
+
+    /** Evita sobrescrever: "Nome.pdf", "Nome (2).pdf", ... */
+    fun unique(dir: File, base: String, ext: String): File {
+        var f = File(dir, "${safe(base)}.$ext")
+        var n = 2
+        while (f.exists()) {
+            f = File(dir, "${safe(base)} ($n).$ext")
+            n++
+        }
+        return f
+    }
+
+    private fun newDoc() = PDDocument(MemoryUsageSetting.setupTempFileOnly())
+
+    /** Acrescenta uma imagem como página (largura A4, altura proporcional). */
+    private fun addImagePage(doc: PDDocument, img: File) {
+        val bmp: Bitmap = decodeImage(img, 2480, 3508)
+        val w = 595f
+        val h = w * bmp.height / bmp.width
+        val page = PDPage(PDRectangle(w, h))
+        doc.addPage(page)
+        val x = JPEGFactory.createFromImage(doc, bmp, 0.9f)
+        PDPageContentStream(doc, page).use { cs -> cs.drawImage(x, 0f, 0f, w, h) }
+        bmp.recycle()
+    }
+
+    /** Várias imagens (ex.: páginas 3 a 5 de um songbook) em um PDF. */
+    suspend fun imagesToPdf(images: List<File>, out: File) = withContext(Dispatchers.IO) {
+        newDoc().use { doc ->
+            images.forEach { addImagePage(doc, it) }
+            doc.save(out)
+        }
+    }
+
+    data class Result(val files: List<File>, val skipped: List<String>)
+
+    /** Um PDF por música: "01 - Nome.pdf". */
+    suspend fun separate(ctx: Context, s: Setlist): Result = withContext(Dispatchers.IO) {
+        val dir = exportDir(s.name)
+        val out = mutableListOf<File>()
+        val skipped = mutableListOf<String>()
+        s.items.forEachIndexed { i, it ->
+            val src = File(it.path)
+            val name = "%02d - %s".format(i + 1, it.label())
+            try {
+                when (Fs.kindOf(src)) {
+                    Kind.PDF -> {
+                        val dst = unique(dir, name, "pdf")
+                        src.copyTo(dst)
+                        out.add(dst)
+                    }
+                    Kind.IMAGE -> {
+                        val dst = unique(dir, name, "pdf")
+                        newDoc().use { d -> addImagePage(d, src); d.save(dst) }
+                        out.add(dst)
+                    }
+                    else -> skipped.add(it.label())
+                }
+            } catch (e: Throwable) {
+                skipped.add(it.label())
+            }
+        }
+        Result(out, skipped)
+    }
+
+    /** Fichário: tudo num PDF só, com marcadores (índice) por música. */
+    suspend fun binder(ctx: Context, s: Setlist): Result = withContext(Dispatchers.IO) {
+        val dir = exportDir(s.name)
+        val dst = unique(dir, s.name, "pdf")
+        val skipped = mutableListOf<String>()
+        val opened = mutableListOf<PDDocument>()
+        val marks = mutableListOf<Pair<String, Int>>()
+        newDoc().use { doc ->
+            val merger = PDFMergerUtility()
+            s.items.forEachIndexed { i, it ->
+                val src = File(it.path)
+                val start = doc.numberOfPages
+                try {
+                    when (Fs.kindOf(src)) {
+                        Kind.PDF -> {
+                            val d = PDDocument.load(src, MemoryUsageSetting.setupTempFileOnly())
+                            opened.add(d)
+                            if (d.isEncrypted) d.setAllSecurityToBeRemoved(true)
+                            merger.appendDocument(doc, d)
+                        }
+                        Kind.IMAGE -> addImagePage(doc, src)
+                        else -> skipped.add(it.label())
+                    }
+                } catch (e: Throwable) {
+                    skipped.add(it.label())
+                }
+                if (doc.numberOfPages > start) marks.add("${i + 1}. ${it.label()}" to start)
+            }
+            // Índice só com as músicas (descarta marcadores que vieram dos arquivos originais).
+            val outline = PDDocumentOutline()
+            for ((title, page) in marks) {
+                val item = PDOutlineItem()
+                item.title = title
+                val dest = PDPageFitDestination()
+                dest.page = doc.getPage(page)
+                item.destination = dest
+                outline.addLast(item)
+            }
+            outline.openNode()
+            doc.documentCatalog.documentOutline = outline
+            doc.save(dst)
+        }
+        opened.forEach { try { it.close() } catch (_: Throwable) {} }
+        Result(listOf(dst), skipped)
+    }
+
+    fun text(s: Setlist): String = buildString {
+        append("Setlist ").append(s.name).append('\n').append('\n')
+        s.items.forEachIndexed { i, it -> append(i + 1).append(". ").append(it.label()).append('\n') }
+    }
+
+    suspend fun txt(s: Setlist): File = withContext(Dispatchers.IO) {
+        val f = unique(exportDir(s.name), s.name, "txt")
+        f.writeText(text(s))
+        f
+    }
+
+    fun shareText(ctx: Context, title: String, body: String) {
+        val i = Intent(Intent.ACTION_SEND).setType("text/plain")
+            .putExtra(Intent.EXTRA_SUBJECT, title)
+            .putExtra(Intent.EXTRA_TEXT, body)
+        ctx.startActivity(Intent.createChooser(i, title))
+    }
+
+    fun shareFiles(ctx: Context, files: List<File>) {
+        if (files.isEmpty()) return
+        val uris = ArrayList(files.map { FileProvider.getUriForFile(ctx, ctx.packageName + ".files", it) })
+        val type = if (files.all { it.extension.equals("pdf", true) }) "application/pdf" else "*/*"
+        val i = if (uris.size == 1) {
+            Intent(Intent.ACTION_SEND).setType(type).putExtra(Intent.EXTRA_STREAM, uris[0])
+        } else {
+            Intent(Intent.ACTION_SEND_MULTIPLE).setType(type).putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+        }
+        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        ctx.startActivity(Intent.createChooser(i, "Compartilhar"))
+    }
+}

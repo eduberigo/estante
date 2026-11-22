@@ -48,6 +48,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        com.tom_roush.pdfbox.android.PDFBoxResourceLoader.init(applicationContext)
         hasPermission.value = Environment.isExternalStorageManager()
         setContent {
             EstanteTheme {
@@ -179,6 +180,7 @@ fun App(hasPermission: Boolean, requestPermission: () -> Unit) {
                 onNextSong = if (r.index < r.files.lastIndex) ({ reading = r.copy(index = r.index + 1, startAtEnd = false) }) else null,
                 onPrevSong = if (r.index > 0) ({ atEnd: Boolean -> reading = r.copy(index = r.index - 1, startAtEnd = atEnd) }) else null,
                 onPlayed = { f, secs -> lib.recordPlay(f.absolutePath, secs) },
+                lib = lib,
                 autoCrop = explorer.autoCrop,
                 onAutoCrop = { explorer.updateAutoCrop(it) },
                 onClose = { reading = null },

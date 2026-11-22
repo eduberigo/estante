@@ -1,1 +1,4 @@
-# Sem regras extras por enquanto.
+# PDFBox (exportar setlists, juntar imagens em PDF)
+-keep class com.tom_roush.** { *; }
+-dontwarn com.gemalto.jp2.**
+-dontwarn com.tom_roush.**

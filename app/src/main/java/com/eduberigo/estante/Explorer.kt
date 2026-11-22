@@ -1187,6 +1187,7 @@ internal fun ListItemRow(
     onClick: () -> Unit,
     onLong: () -> Unit,
     size: Int = 1,
+    title: String = e.title,
 ) {
     val bg = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent
     Row(
@@ -1208,7 +1209,7 @@ internal fun ListItemRow(
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(e.title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
             val meta = subtitle ?: if (e.kind == Kind.DIR) "Pasta" else "${Fs.humanSize(e.size)} • ${Fs.humanDate(e.modified)}"
             Text(
                 meta,
@@ -1282,11 +1283,14 @@ fun PreviewPane(
     val viewable = entry.kind == Kind.PDF || entry.kind == Kind.IMAGE
     val doc = remember(entry.path) { if (viewable) openDoc(entry.file) else null }
     DisposableEffect(doc) { onDispose { doc?.close() } }
-    var page by remember(entry.path) { mutableIntStateOf(0) }
+    var page by remember(entry.path) { mutableIntStateOf(doc?.startPage ?: 0) }
     val pages = doc?.pageCount ?: 0
     val pageNow by rememberUpdatedState(page)
     val pagesNow by rememberUpdatedState(pages)
-    val openNow by rememberUpdatedState { onOpen(entry) }
+    val openNow by rememberUpdatedState {
+        val f = doc?.pageFiles?.getOrNull(page)
+        onOpen(if (f != null && f != entry.file) Fs.entry(f) else entry)
+    }
     fun go(d: Int) {
         val t = (pageNow + d).coerceIn(0, (pagesNow - 1).coerceAtLeast(0))
         page = t
@@ -1375,10 +1379,11 @@ fun PreviewPane(
             }
             val info: @Composable (Modifier) -> Unit = { m ->
                 Column(m) {
-                    Text(entry.title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    val shownTitle = doc?.pageFiles?.getOrNull(page)?.nameWithoutExtension ?: entry.title
+                    Text(shownTitle, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     val kindLabel = when (entry.kind) {
                         Kind.PDF -> "$pages ${if (pages == 1) "pág." else "págs."}"
-                        Kind.IMAGE -> "Imagem"
+                        Kind.IMAGE -> if (pages > 1) "imagem ${page + 1} de $pages da pasta" else "Imagem"
                         else -> entry.file.extension.uppercase().ifEmpty { "Arquivo" }
                     }
                     Text(
@@ -1407,7 +1412,7 @@ fun PreviewPane(
                     if (onShowFolder != null) {
                         OutlinedButton(onClick = { onShowFolder(entry.file) }) { Text("Pasta") }
                     }
-                    Button(onClick = { onOpen(entry) }) {
+                    Button(onClick = { openNow() }) {
                         Text(if (viewable) "Abrir" else "Abrir com…")
                     }
                 }

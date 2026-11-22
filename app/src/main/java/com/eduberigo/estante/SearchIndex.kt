@@ -88,6 +88,32 @@ object SearchIndex {
         }
     }
 
+    @Volatile private var dirsSig: String? = null
+    @Volatile private var dirs: Map<String, List<String>> = emptyMap()
+
+    /**
+     * Pastas (dentro das pastas do Início) cujo nome bate com algum dos nomes dados, sem acento
+     * e sem diferença de maiúsculas. Usado para achar a pasta do artista.
+     */
+    fun dirsNamed(names: Collection<String>): List<File> {
+        val s = sig ?: return emptyList()
+        if (dirsSig != s) {
+            val m = HashMap<String, MutableList<String>>()
+            val seen = HashSet<String>()
+            for (it in items) {
+                var p = File(it.path).parentFile
+                while (p != null && seen.add(p.absolutePath)) {
+                    m.getOrPut(Fs.norm(p.name)) { mutableListOf() }.add(p.absolutePath)
+                    p = p.parentFile
+                }
+            }
+            dirs = m
+            dirsSig = s
+        }
+        return names.map { Fs.norm(it.trim()) }.filter { it.length >= 2 }.distinct()
+            .flatMap { dirs[it].orEmpty() }.distinct().map { File(it) }
+    }
+
     /** Todas as palavras precisam aparecer no caminho (pasta + nome), sem acento. */
     fun search(query: String, limit: Int = 400): List<Entry> {
         val tokens = Fs.norm(query).split(' ', '\t').filter { it.isNotBlank() }

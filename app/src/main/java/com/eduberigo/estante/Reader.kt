@@ -85,6 +85,7 @@ fun ReaderScreen(
     onNextSong: (() -> Unit)?,
     onPrevSong: ((atEnd: Boolean) -> Unit)?,
     onPlayed: (File, Int) -> Unit,
+    lib: Library,
     autoCrop: Boolean,
     onAutoCrop: (Boolean) -> Unit,
     onClose: () -> Unit,
@@ -133,9 +134,11 @@ fun ReaderScreen(
     }
 
     val count = doc.pageCount.coerceAtLeast(1)
-    val pager = rememberPagerState(initialPage = if (startAtEnd) count - 1 else 0, pageCount = { count })
+    val pager = rememberPagerState(initialPage = if (startAtEnd) count - 1 else doc.startPage.coerceIn(0, count - 1), pageCount = { count })
     val scope = rememberCoroutineScope()
     var showBars by remember { mutableStateOf(false) }
+    var savePdf by remember { mutableStateOf(false) }
+    val imageFiles = doc.pageFiles
 
     val turn: (Int) -> Unit = remember(pager, count) {
         { delta ->
@@ -215,7 +218,7 @@ fun ReaderScreen(
                 }
                 Column(Modifier.weight(1f)) {
                     Text(
-                        file.nameWithoutExtension,
+                        imageFiles?.getOrNull(pager.currentPage)?.nameWithoutExtension ?: file.nameWithoutExtension,
                         color = Color.White,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -243,6 +246,11 @@ fun ReaderScreen(
                     color = Color.White,
                     modifier = Modifier.padding(horizontal = 12.dp),
                 )
+                if (imageFiles != null) {
+                    androidx.compose.material3.TextButton(onClick = { savePdf = true }) {
+                        Text("Salvar PDF", color = Color(0xFF8AB4F8))
+                    }
+                }
                 IconButton(onClick = { onAutoCrop(!autoCrop) }) {
                     Icon(
                         painterResource(R.drawable.ic_crop),
@@ -272,6 +280,9 @@ fun ReaderScreen(
                     )
                 }
             }
+        }
+        if (savePdf && imageFiles != null) {
+            SaveImagesPdfDialog(imageFiles, pager.currentPage, lib) { savePdf = false }
         }
     }
 }

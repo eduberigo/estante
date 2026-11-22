@@ -9,8 +9,13 @@ import org.json.JSONObject
 import java.io.File
 import java.util.UUID
 
+/** Uma música no setlist: o arquivo e, se quiser, um nome só para o setlist (o arquivo não muda). */
+data class SetItem(val path: String, val name: String? = null) {
+    fun label(): String = name ?: File(path).nameWithoutExtension
+}
+
 /** Setlist: só uma lista ordenada de caminhos. Nenhum arquivo é copiado. */
-data class Setlist(val id: String, val name: String, val items: List<String>)
+data class Setlist(val id: String, val name: String, val items: List<SetItem>)
 
 /** Uma vez que a partitura ficou aberta tempo suficiente para contar como "tocada". */
 data class Play(val time: Long, val path: String, val seconds: Int)
@@ -31,8 +36,8 @@ class Library(ctx: Context) {
 
     fun get(id: String): Setlist? = setlists.firstOrNull { it.id == id }
 
-    fun create(name: String, items: List<String> = emptyList()): Setlist {
-        val s = Setlist(UUID.randomUUID().toString(), name.trim().ifEmpty { "Novo setlist" }, items)
+    fun create(name: String, paths: List<String> = emptyList()): Setlist {
+        val s = Setlist(UUID.randomUUID().toString(), name.trim().ifEmpty { "Novo setlist" }, paths.map { SetItem(it) })
         setlists = setlists + s
         saveSetlists()
         return s
@@ -45,7 +50,17 @@ class Library(ctx: Context) {
         saveSetlists()
     }
 
-    fun add(id: String, path: String) = update(id) { it.copy(items = it.items + path) }
+    fun add(id: String, path: String) = update(id) { it.copy(items = it.items + SetItem(path)) }
+
+    fun renameItem(id: String, index: Int, name: String?) = update(id) {
+        if (index !in it.items.indices) {
+            it
+        } else {
+            val m = it.items.toMutableList()
+            m[index] = m[index].copy(name = name?.trim()?.ifEmpty { null })
+            it.copy(items = m)
+        }
+    }
 
     fun removeAt(id: String, index: Int) = update(id) {
         if (index !in it.items.indices) it else it.copy(items = it.items.toMutableList().also { m -> m.removeAt(index) })
@@ -79,7 +94,14 @@ class Library(ctx: Context) {
                 Setlist(
                     o.getString("id"),
                     o.getString("name"),
-                    (0 until items.length()).map { items.getString(it) },
+                    (0 until items.length()).map { k ->
+                        val x = items.get(k)
+                        if (x is JSONObject) {
+                            SetItem(x.getString("path"), x.optString("name").ifEmpty { null })
+                        } else {
+                            SetItem(x.toString())
+                        }
+                    },
                 )
             }
         }
@@ -95,7 +117,16 @@ class Library(ctx: Context) {
                     JSONObject()
                         .put("id", s.id)
                         .put("name", s.name)
-                        .put("items", JSONArray(s.items))
+                        .put(
+                            "items",
+                            JSONArray().also { a ->
+                                s.items.forEach { it2 ->
+                                    val o = JSONObject().put("path", it2.path)
+                                    if (it2.name != null) o.put("name", it2.name)
+                                    a.put(o)
+                                }
+                            },
+                        )
                 )
             }
             val tmp = File(setFile.path + ".tmp")

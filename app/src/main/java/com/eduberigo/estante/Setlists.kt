@@ -41,6 +41,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -58,9 +59,11 @@ fun SetlistContent(
     val ctx = LocalContext.current
     val manual = lib.get(id)
     val auto = if (manual == null) lib.autoSetlists().firstOrNull { it.id == id } else null
-    val paths = manual?.items ?: auto?.items ?: emptyList()
+    val paths = manual?.items?.map { it.path } ?: auto?.items ?: emptyList()
+    val labels = manual?.items?.map { it.label() } ?: paths.map { File(it).nameWithoutExtension }
     var renaming by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
+    var exporting by remember { mutableStateOf(false) }
 
     val entries by produceState(emptyList<Entry>(), paths) {
         value = withContext(Dispatchers.IO) {
@@ -82,6 +85,7 @@ fun SetlistContent(
                 onClick = { onPlay(paths.map { File(it) }, 0) },
             ) { Text("▶ Tocar") }
             if (manual != null) {
+                OutlinedButton(enabled = paths.isNotEmpty(), onClick = { exporting = true }) { Text("Exportar") }
                 OutlinedButton(onClick = { renaming = true }) { Text("Renomear") }
                 OutlinedButton(onClick = { deleting = true }) { Text("Excluir") }
             } else if (auto != null) {
@@ -93,7 +97,7 @@ fun SetlistContent(
         }
         Text(
             when {
-                manual != null -> "${paths.size} músicas • segure o dedo numa música para mover ou remover"
+                manual != null -> "${paths.size} músicas • segure o dedo numa música para mover, renomear ou remover"
                 id == "auto:top" -> "Automático: as mais tocadas, da mais para a menos tocada"
                 else -> "Automático: mais tocadas deste artista (artista estimado pelo nome do arquivo)"
             },
@@ -120,6 +124,7 @@ fun SetlistContent(
                     ListItemRow(
                         e, sub, state.selected?.path == e.path, state.isFav(e.path),
                         { onClickItem(entries, i) }, { onLongItem(entries, i) }, state.thumbSize,
+                        title = labels.getOrNull(i) ?: e.title,
                     )
                 }
             }
@@ -131,6 +136,9 @@ fun SetlistContent(
             lib.rename(manual.id, it)
             renaming = false
         }
+    }
+    if (exporting && manual != null) {
+        ExportDialog(manual) { exporting = false }
     }
     if (deleting && manual != null) {
         AlertDialog(
@@ -182,7 +190,7 @@ fun AddToSetlistDialog(lib: Library, path: String, onDismiss: () -> Unit) {
                 ActionRow("+ Novo setlist…") { creating = true }
                 Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
                     lib.setlists.forEach { s ->
-                        val has = path in s.items
+                        val has = s.items.any { it.path == path }
                         Row(
                             Modifier
                                 .fillMaxWidth()
@@ -225,11 +233,19 @@ fun SetlistItemDialog(
     onDismiss: () -> Unit,
 ) {
     val s = lib.get(setlistId)
+    var renamingItem by remember { mutableStateOf(false) }
+    if (renamingItem && s != null) {
+        NameDialog("Nome no setlist", s.items.getOrNull(index)?.label() ?: entry.title, onDismiss = onDismiss) {
+            lib.renameItem(setlistId, index, it)
+            onDismiss()
+        }
+        return
+    }
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = RoundedCornerShape(16.dp)) {
             Column(Modifier.padding(vertical = 8.dp).fillMaxWidth()) {
                 Text(
-                    "${index + 1}. ${entry.title}",
+                    "${index + 1}. ${s?.items?.getOrNull(index)?.label() ?: entry.title}",
                     style = MaterialTheme.typography.titleMedium,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
@@ -244,6 +260,10 @@ fun SetlistItemDialog(
                     if (index < s.items.lastIndex) {
                         ActionRow("Mover para baixo") { lib.move(setlistId, index, 1); onDismiss() }
                         ActionRow("Mover para o fim") { lib.move(setlistId, index, s.items.lastIndex - index); onDismiss() }
+                    }
+                    ActionRow("Renomear só no setlist…") { renamingItem = true }
+                    if (s.items.getOrNull(index)?.name != null) {
+                        ActionRow("Voltar ao nome do arquivo") { lib.renameItem(setlistId, index, null); onDismiss() }
                     }
                     ActionRow("Remover deste setlist") { lib.removeAt(setlistId, index); onDismiss() }
                 }
@@ -276,4 +296,75 @@ fun NameDialog(title: String, initial: String, onDismiss: () -> Unit, onConfirm:
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },
     )
+}
+
+/** Exportar o setlist: PDFs separados, fichário único, lista em texto. */
+@Composable
+fun ExportDialog(s: Setlist, onDismiss: () -> Unit) {
+    val ctx = LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var busy by remember { mutableStateOf<String?>(null) }
+    var result by remember { mutableStateOf<Export.Result?>(null) }
+    Dialog(onDismissRequest = { if (busy == null) onDismiss() }) {
+        Surface(shape = RoundedCornerShape(16.dp)) {
+            Column(Modifier.padding(vertical = 8.dp).fillMaxWidth()) {
+                Text(
+                    "Exportar \"${s.name}\"",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                )
+                val r = result
+                when {
+                    busy != null -> Row(
+                        Modifier.padding(20.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        androidx.compose.material3.CircularProgressIndicator()
+                        Text(busy!!, modifier = Modifier.padding(start = 16.dp))
+                    }
+                    r != null -> {
+                        Text(
+                            "Salvo em Documentos/Estante/${Export.safe(s.name)}\n" +
+                                "${r.files.size} arquivo(s)" +
+                                if (r.skipped.isNotEmpty()) "\nNão exportadas: ${r.skipped.joinToString()}" else "",
+                            modifier = Modifier.padding(horizontal = 20.dp),
+                        )
+                        Row(
+                            Modifier.fillMaxWidth().padding(20.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                        ) {
+                            OutlinedButton(onClick = { Export.shareFiles(ctx, r.files) }) { Text("Compartilhar") }
+                            Button(onClick = onDismiss) { Text("OK") }
+                        }
+                    }
+                    else -> {
+                        HorizontalDivider()
+                        ActionRow("PDFs separados (01 - música.pdf, 02 - …)") {
+                            busy = "Gerando PDFs…"
+                            scope.launch {
+                                result = try { Export.separate(ctx, s) } catch (e: Throwable) { Export.Result(emptyList(), listOf(e.message ?: "erro")) }
+                                busy = null
+                            }
+                        }
+                        ActionRow("Fichário: tudo num PDF só, com índice") {
+                            busy = "Montando o fichário…"
+                            scope.launch {
+                                result = try { Export.binder(ctx, s) } catch (e: Throwable) { Export.Result(emptyList(), listOf(e.message ?: "erro")) }
+                                busy = null
+                            }
+                        }
+                        ActionRow("Lista em texto (.txt)") {
+                            scope.launch {
+                                val f = try { Export.txt(s) } catch (e: Throwable) { null }
+                                result = Export.Result(listOfNotNull(f), emptyList())
+                            }
+                        }
+                        ActionRow("Enviar a lista como mensagem") {
+                            Export.shareText(ctx, "Setlist ${s.name}", Export.text(s))
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
