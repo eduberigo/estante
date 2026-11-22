@@ -11,6 +11,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -90,7 +95,11 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -248,9 +257,32 @@ class ExplorerState(private val prefs: Prefs) {
     }
 
     /** Onde a busca procura: as pastas do Início; sem nenhuma, o armazenamento interno. */
-    fun searchRoots(): List<File> =
+    fun searchRoots(volumes: List<Volume>): List<File> =
         pinned.map { File(it) }.filter { it.isDirectory }
-            .ifEmpty { listOf(Environment.getExternalStorageDirectory()) }
+            .ifEmpty { volumes.map { it.dir }.ifEmpty { listOf(Environment.getExternalStorageDirectory()) } }
+
+    var recents by mutableStateOf(prefs.recentSearches)
+        private set
+
+    fun rememberSearch(q: String) {
+        val t = q.trim()
+        if (t.length < 2) return
+        recents = (listOf(t) + recents.filter { !it.equals(t, ignoreCase = true) }).take(20)
+        prefs.recentSearches = recents
+    }
+
+    fun forgetSearch(q: String) {
+        recents = recents - q
+        prefs.recentSearches = recents
+    }
+
+    fun clearRecents() {
+        recents = emptyList()
+        prefs.recentSearches = recents
+    }
+
+    /** Modo "escolher pasta para o Início": navega normalmente e mostra o botão de adicionar. */
+    var pickingFolder by mutableStateOf(false)
 
     /** Caminho curto para mostrar: relativo à pasta do Início que contém o arquivo. */
     fun shortFolder(f: File): String {
@@ -308,12 +340,15 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
         }
     }
 
-    val roots = state.searchRoots()
+    val roots = state.searchRoots(volumes)
     val rootsKey = roots.joinToString("|") { it.absolutePath }
 
     // Índice em segundo plano: deixa a busca pronta e ajuda a estimar artistas.
     LaunchedEffect(rootsKey) {
         SearchIndex.ensure(ctx, roots, force = false) { }
+        state.indexVersion++
+        // Atualiza em silêncio (arquivos novos, cartão de memória inserido depois).
+        SearchIndex.ensure(ctx, roots, force = true) { }
         state.indexVersion++
     }
 
@@ -351,6 +386,7 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
     BackHandler(enabled = state.searching || !state.atHome) { goBack() }
 
     fun open(e: Entry) {
+        if (state.searching) state.rememberSearch(state.query)
         if (!e.file.exists()) {
             Toast.makeText(ctx, "Não encontrado: ${e.path}", Toast.LENGTH_LONG).show()
             return
@@ -550,13 +586,22 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                         if (state.loading && !state.searching && !state.atHome && state.openSetlist == null) {
                             LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
                         }
-                        Box(Modifier.weight(1f).fillMaxWidth()) {
+                        Box(
+                            Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                                .pinchSteps { d -> state.updateThumbSize(state.thumbSize + d) },
+                        ) {
                             when {
                                 state.searching -> ResultsList(state, ::click, ::longClick)
                                 state.atHome -> HomeContent(
                                     state, lib, pinnedEntries, favEntries, volumes, ::click, ::longClick,
                                     onOpenSetlist = { state.openSet(it) },
                                     onNewSetlist = { newSetlist = true },
+                                    onAddFolder = {
+                                        state.pickingFolder = true
+                                        state.navigate(volumes.first().dir)
+                                    },
                                 )
                                 state.openSetlist != null -> SetlistContent(
                                     state = state,
@@ -586,6 +631,20 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                                 )
                                 else -> FolderContent(state, ::click, ::longClick)
                             }
+                        }
+                        if (state.pickingFolder && !state.atHome && state.openSetlist == null && !state.searching) {
+                            PickFolderBar(
+                                state = state,
+                                volumes = volumes,
+                                onAdd = {
+                                    val here = state.dir.absolutePath
+                                    if (!state.isPinned(here)) state.togglePin(here)
+                                    state.pickingFolder = false
+                                    Toast.makeText(ctx, "\"${state.dir.name}\" adicionada ao Início", Toast.LENGTH_SHORT).show()
+                                    state.goHome()
+                                },
+                                onCancel = { state.pickingFolder = false; state.goHome() },
+                            )
                         }
                     }
                 }
@@ -805,7 +864,7 @@ private fun SearchField(state: ExplorerState) {
         singleLine = true,
         placeholder = { Text("Título, artista, pasta…") },
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-        keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
+        keyboardActions = KeyboardActions(onSearch = { state.rememberSearch(state.query); keyboard?.hide() }),
         colors = TextFieldDefaults.colors(
             focusedContainerColor = Color.Transparent,
             unfocusedContainerColor = Color.Transparent,
@@ -890,6 +949,7 @@ private fun HomeContent(
     onLong: (Entry) -> Unit,
     onOpenSetlist: (String) -> Unit,
     onNewSetlist: () -> Unit,
+    onAddFolder: () -> Unit,
 ) {
     val gs = remember { LazyGridState(state.scrollMem["#home"] ?: 0) }
     val autos = remember(lib.history) { lib.autoSetlists() }
@@ -967,6 +1027,20 @@ private fun HomeContent(
                 onClick = { onClick(e) },
                 onLong = { onLong(e) },
                 thumbPx = GridPx[state.thumbSize],
+            )
+        }
+
+        item(key = "p:add") {
+            GridItem(
+                e = Entry(File("adicionar"), Kind.OTHER, 0L, 0L),
+                label = "Adicionar pasta",
+                selected = false,
+                fav = false,
+                subtitle = "memória ou cartão",
+                dim = false,
+                onClick = onAddFolder,
+                onLong = onAddFolder,
+                icon = R.drawable.ic_add,
             )
         }
 
@@ -1095,12 +1169,101 @@ private fun FolderContent(state: ExplorerState, onClick: (Entry) -> Unit, onLong
 
 @Composable
 private fun ResultsList(state: ExplorerState, onClick: (Entry) -> Unit, onLong: (Entry) -> Unit) {
+    if (state.query.isBlank()) {
+        RecentSearches(state)
+        return
+    }
+    val tokens = remember(state.query) { Fs.norm(state.query).split(' ', '\t').filter { it.isNotBlank() } }
     LazyColumn(Modifier.fillMaxSize()) {
         items(state.results, key = { it.path }) { e ->
             ListItemRow(
                 e, state.shortFolder(e.file), state.selected?.path == e.path, state.isFav(e.path),
                 { onClick(e) }, { onLong(e) }, state.thumbSize,
+                highlight = tokens,
             )
+        }
+    }
+}
+
+/** Lista de buscas recentes (aparece com o campo de busca vazio). */
+@Composable
+private fun RecentSearches(state: ExplorerState) {
+    if (state.recents.isEmpty()) {
+        HintText("As buscas que você fizer aparecem aqui para repetir com um toque.")
+        return
+    }
+    LazyColumn(Modifier.fillMaxSize()) {
+        item {
+            Row(
+                Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Buscas recentes",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f),
+                )
+                androidx.compose.material3.TextButton(onClick = { state.clearRecents() }) { Text("Limpar") }
+            }
+        }
+        items(state.recents, key = { it }) { q ->
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { state.query = q }
+                    .padding(start = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Filled.Search, null, tint = MaterialTheme.colorScheme.outline)
+                Text(q, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(start = 12.dp).weight(1f))
+                IconButton(onClick = { state.forgetSearch(q) }) {
+                    Icon(Icons.Filled.Clear, "Remover das recentes", tint = MaterialTheme.colorScheme.outline)
+                }
+            }
+        }
+    }
+}
+
+/** Destaca no texto as palavras buscadas, ignorando acentos e maiúsculas. */
+internal fun highlighted(text: String, tokens: List<String>, bg: Color, fg: Color): androidx.compose.ui.text.AnnotatedString {
+    if (tokens.isEmpty()) return androidx.compose.ui.text.AnnotatedString(text)
+    // Texto normalizado + mapa de cada posição normalizada para a posição original.
+    val sb = StringBuilder()
+    val map = ArrayList<Int>()
+    text.forEachIndexed { i, c ->
+        val n = Fs.norm(c.toString())
+        for (ch in n) {
+            sb.append(ch)
+            map.add(i)
+        }
+    }
+    val norm = sb.toString()
+    val marks = BooleanArray(text.length)
+    for (t in tokens) {
+        var from = 0
+        while (true) {
+            val k = norm.indexOf(t, from)
+            if (k < 0) break
+            for (j in k until k + t.length) marks[map[j]] = true
+            from = k + 1
+        }
+    }
+    val style = androidx.compose.ui.text.SpanStyle(
+        background = bg, color = fg, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+    )
+    return androidx.compose.ui.text.buildAnnotatedString {
+        append(text)
+        var i = 0
+        while (i < text.length) {
+            if (marks[i]) {
+                var j = i
+                while (j < text.length && marks[j]) j++
+                addStyle(style, i, j)
+                i = j
+            } else {
+                i++
+            }
         }
     }
 }
@@ -1188,6 +1351,7 @@ internal fun ListItemRow(
     onLong: () -> Unit,
     size: Int = 1,
     title: String = e.title,
+    highlight: List<String> = emptyList(),
 ) {
     val bg = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent
     Row(
@@ -1209,10 +1373,15 @@ internal fun ListItemRow(
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            val hl = MaterialTheme.colorScheme.tertiaryContainer
+            val hlText = MaterialTheme.colorScheme.onTertiaryContainer
+            Text(
+                highlighted(title, highlight, hl, hlText),
+                style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            )
             val meta = subtitle ?: if (e.kind == Kind.DIR) "Pasta" else "${Fs.humanSize(e.size)} • ${Fs.humanDate(e.modified)}"
             Text(
-                meta,
+                highlighted(meta, highlight, hl, hlText),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -1284,6 +1453,8 @@ fun PreviewPane(
     val doc = remember(entry.path) { if (viewable) openDoc(entry.file) else null }
     DisposableEffect(doc) { onDispose { doc?.close() } }
     var page by remember(entry.path) { mutableIntStateOf(doc?.startPage ?: 0) }
+    var zoom by remember(entry.path, page) { mutableFloatStateOf(1f) }
+    var pan0 by remember(entry.path, page) { mutableStateOf(Offset.Zero) }
     val pages = doc?.pageCount ?: 0
     val pageNow by rememberUpdatedState(page)
     val pagesNow by rememberUpdatedState(pages)
@@ -1304,9 +1475,42 @@ fun PreviewPane(
                 .clip(RoundedCornerShape(6.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant)
                 .pointerInput(entry.path) {
+                    // Pinça para ampliar a página; com zoom, um dedo arrasta.
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        do {
+                            val ev = awaitPointerEvent(PointerEventPass.Initial)
+                            val fingers = ev.changes.count { it.pressed }
+                            if (fingers >= 2 || zoom > 1.01f) {
+                                val z = ev.calculateZoom()
+                                val pan = ev.calculatePan()
+                                val c = ev.calculateCentroid(useCurrent = true)
+                                var ns = (zoom * z).coerceIn(1f, 5f)
+                                val center = Offset(size.width / 2f, size.height / 2f)
+                                var t = pan0
+                                if (c != Offset.Unspecified) {
+                                    val g = c - center
+                                    t = g - (g - t) * (ns / zoom)
+                                }
+                                t += pan
+                                if (ns < 1.02f) {
+                                    ns = 1f
+                                    t = Offset.Zero
+                                }
+                                val mx = (ns - 1f) * size.width / 2f
+                                val my = (ns - 1f) * size.height / 2f
+                                pan0 = Offset(t.x.coerceIn(-mx, mx), t.y.coerceIn(-my, my))
+                                zoom = ns
+                                ev.changes.forEach { if (it.positionChanged()) it.consume() }
+                            }
+                        } while (ev.changes.any { it.pressed })
+                    }
+                }
+                .pointerInput(entry.path) {
                     detectTapGestures { p ->
                         val x = p.x / size.width
                         when {
+                            zoom > 1.01f -> { zoom = 1f; pan0 = Offset.Zero }
                             x < 0.25f && pagesNow > 1 -> go(-1)
                             x > 0.75f && pagesNow > 1 -> go(1)
                             else -> openNow()
@@ -1318,7 +1522,7 @@ fun PreviewPane(
                     detectHorizontalDragGestures(
                         onDragStart = { total = 0f },
                         onDragEnd = {
-                            if (abs(total) > 60f) go(if (total < 0) 1 else -1)
+                            if (zoom <= 1.01f && abs(total) > 60f) go(if (total < 0) 1 else -1)
                         },
                     ) { change, amount ->
                         change.consume()
@@ -1332,11 +1536,20 @@ fun PreviewPane(
             when {
                 doc != null -> {
                     val bmp by produceState<Bitmap?>(null, doc, page, w, h, crop) {
-                        value = doc.render(page, w, h, crop)
+                        value = doc.render(page, (w * 1.5f).toInt(), (h * 1.5f).toInt(), crop)
                     }
                     val b = bmp
                     if (b != null) {
-                        Image(b.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                        Image(
+                            b.asImageBitmap(), null,
+                            Modifier.fillMaxSize().graphicsLayer {
+                                scaleX = zoom
+                                scaleY = zoom
+                                translationX = pan0.x
+                                translationY = pan0.y
+                            },
+                            contentScale = ContentScale.Fit,
+                        )
                     } else {
                         CircularProgressIndicator()
                     }
@@ -1435,5 +1648,58 @@ fun PreviewPane(
                 }
             }
         }
+    }
+}
+
+/** Barra do modo "escolher pasta": entre na pasta desejada e toque em Adicionar. */
+@Composable
+private fun PickFolderBar(state: ExplorerState, volumes: List<Volume>, onAdd: () -> Unit, onCancel: () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.secondaryContainer) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Text(
+                "Entre na pasta que quer no Início e toque em Adicionar.",
+                style = MaterialTheme.typography.labelMedium,
+            )
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                volumes.forEach { v ->
+                    androidx.compose.material3.TextButton(onClick = { state.navigate(v.dir) }) { Text(v.label) }
+                }
+            }
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                androidx.compose.material3.TextButton(onClick = onCancel) { Text("Cancelar") }
+                Button(onClick = onAdd) {
+                    Text("Adicionar \"${state.dir.name}\"", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+    }
+}
+
+/** Pinça na lista/grade: abrir os dedos aumenta as miniaturas, fechar diminui. Um dedo continua rolando. */
+private fun Modifier.pinchSteps(onStep: (Int) -> Unit): Modifier = pointerInput(Unit) {
+    awaitEachGesture {
+        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+        var acc = 1f
+        do {
+            val ev = awaitPointerEvent(PointerEventPass.Initial)
+            if (ev.changes.count { it.pressed } >= 2) {
+                acc *= ev.calculateZoom()
+                if (acc > 1.35f) {
+                    onStep(1)
+                    acc = 1f
+                } else if (acc < 0.74f) {
+                    onStep(-1)
+                    acc = 1f
+                }
+                ev.changes.forEach { it.consume() }
+            }
+        } while (ev.changes.any { it.pressed })
     }
 }

@@ -134,6 +134,11 @@ class Prefs(ctx: Context) {
         get() = sp.getFloat("splitLandscape", 0.45f)
         set(v) { sp.edit().putFloat("splitLandscape", v).apply() }
 
+    /** Buscas recentes, da mais nova para a mais antiga. */
+    var recentSearches: List<String>
+        get() = getList("recentSearches")
+        set(v) = putList("recentSearches", v)
+
     /** Pastas fixadas na tela Início, na ordem escolhida. */
     var pinned: List<String>
         get() = getList("pinned")
