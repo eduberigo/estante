@@ -31,6 +31,10 @@ object SelfTest {
                     val d = openDoc(f)!!
                     val b = d.render(0, 800, 1200, true, true)
                     Log.i(tag, "legivel ${b?.width}x${b?.height}")
+                    imgs.firstOrNull()?.let { im ->
+                        val e2 = openDoc(im)!!.render(0, 800, 1200, true, true)
+                        Log.i(tag, "legivel imagem ${e2?.width}x${e2?.height}")
+                    }
                     d.close()
                 }
                 imgs.filter { it.name.startsWith("torta") }.forEach { f ->

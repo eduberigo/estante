@@ -121,6 +121,7 @@ class PdfDoc(file: File) : Doc {
                     page.close()
                 }
             } catch (e: Throwable) {
+                android.util.Log.w("Estante", "render falhou p=$index crop=$crop enhance=$enhance", e)
                 null
             }
         }
