@@ -39,7 +39,7 @@ adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb pull /sdcard/ui
 # 3b) Leitor + anotação pela interface
 dump() { adb shell uiautomator dump /sdcard/u.xml >/dev/null 2>&1; adb pull /sdcard/u.xml out/ui-tmp.xml >/dev/null 2>&1; }
 adb shell am force-stop $PKG
-adb shell am start -n $PKG/.MainActivity --es abrir "/sdcard/Partituras/Casamentos/Perfect - Ed Sheeran - X - pop - G - 95.pdf"
+adb shell "am start -n $PKG/.MainActivity --es abrir '/sdcard/Partituras/Casamentos/Perfect - Ed Sheeran - X - pop - G - 95.pdf'"
 sleep 6
 W=$(adb shell wm size | grep -o '[0-9]*x[0-9]*' | tail -1 | cut -dx -f1); H=$(adb shell wm size | grep -o '[0-9]*x[0-9]*' | tail -1 | cut -dx -f2)
 adb shell input tap $((W/2)) $((H/2)); sleep 2; dump; cp out/ui-tmp.xml out/ui-leitor.xml
