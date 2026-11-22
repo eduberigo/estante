@@ -264,24 +264,64 @@ object Meta {
         val b = ps[1]
         // Padrão completo (com código, gênero, tom, BPM): Título - Artista.
         if (total >= 4) return Guess(b, a)
-        val fa = partFreq[Fs.norm(a)] ?: 0
-        val fb = partFreq[Fs.norm(b)] ?: 0
+        val fa = artistScore(a)
+        val fb = artistScore(b)
         return when {
             fb > fa -> Guess(b, a)
             else -> Guess(a, b)
         }
     }
 
-    /** Conta quantas vezes cada trecho aparece nos nomes da biblioteca. */
+    /** Conta quantas vezes cada trecho aparece nos nomes da biblioteca (inteiro e separado em participações). */
     fun buildFreq(names: Sequence<String>) {
         val m = HashMap<String, Int>()
         for (nm in names) {
             val (ps, _) = parts(nm)
             for (p in ps.take(2)) {
-                val k = Fs.norm(p)
-                m[k] = (m[k] ?: 0) + 1
+                val pieces = (listOf(p) + featSplit(p) + listSplit(p)).map { key(it) }.filter { it.isNotEmpty() }.toSet()
+                for (k in pieces) m[k] = (m[k] ?: 0) + 1
             }
         }
         partFreq = m
+    }
+
+    /** Chave de comparação: sem acento, minúsculas, espaços simples. */
+    fun key(s: String): String = Fs.norm(s).replace(Regex("[\\s.]+"), " ").trim()
+
+    private val featRe = Regex(
+        "\\s*[(\\[]?\\s*\\b(feat\\.?|ft\\.?|featuring|part\\.?|participa[cç][aã]o(\\s+especial)?(\\s+de)?|with|com)\\s+",
+        RegexOption.IGNORE_CASE,
+    )
+    private val listRe = Regex("\\s+(&|e|and|x|y)\\s+|\\s*,\\s*|\\s*/\\s*", RegexOption.IGNORE_CASE)
+
+    /** "Elton John feat. Kiki Dee" → [Elton John, Kiki Dee]. */
+    private fun featSplit(a: String): List<String> =
+        a.split(featRe).map { it.trim().trim('(', ')', '[', ']').trim() }.filter { it.isNotEmpty() }
+
+    private fun listSplit(a: String): List<String> =
+        a.split(listRe).map { it.trim() }.filter { it.isNotEmpty() }
+
+    private fun artistScore(p: String): Int {
+        val whole = partFreq[key(p)] ?: 0
+        val main = featSplit(p).firstOrNull()?.let { partFreq[key(it)] } ?: 0
+        return maxOf(whole, main)
+    }
+
+    /**
+     * Todos os artistas de um trecho, para agrupar:
+     * participações sempre separam; "&", "e", "x", "," só separam se cada nome existir sozinho na biblioteca
+     * (assim "Simon & Garfunkel" continua junto).
+     */
+    fun artistsOf(a: String): List<String> {
+        val out = mutableListOf<String>()
+        for (piece in featSplit(a)) {
+            val sub = listSplit(piece)
+            if (sub.size > 1 && sub.all { (partFreq[key(it)] ?: 0) >= 1 && key(it) != key(piece) }) {
+                out.addAll(sub)
+            } else {
+                out.add(piece)
+            }
+        }
+        return out.ifEmpty { listOf(a) }
     }
 }

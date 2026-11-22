@@ -31,7 +31,7 @@ enum class BrowseKind(val label: String, val plural: String) {
     ARTIST("Artista", "Artistas"), TITLE("Título", "Títulos"), GENRE("Gênero", "Gêneros"), KEY("Tom", "Tons"),
 }
 
-data class BrowseItem(val path: String, val info: Meta.Info)
+data class BrowseItem(val path: String, val info: Meta.Info, val artists: List<String>)
 
 /** Lê (uma vez por versão do índice) as informações de todos os PDFs das pastas do Início. */
 object BrowseData {
@@ -42,17 +42,44 @@ object BrowseData {
         if (version != indexVersion || data.isEmpty()) {
             data = SearchIndex.allPaths()
                 .filter { it.endsWith(".pdf", ignoreCase = true) }
-                .map { BrowseItem(it, Meta.info(File(it).nameWithoutExtension)) }
+                .map {
+                    val inf = Meta.info(File(it).nameWithoutExtension)
+                    BrowseItem(it, inf, inf.artist?.let { a -> Meta.artistsOf(a) }.orEmpty())
+                }
+            buildNames()
             version = indexVersion
         }
         return data
     }
 
-    fun valueOf(kind: BrowseKind, i: Meta.Info): String = when (kind) {
-        BrowseKind.ARTIST -> i.artist ?: "(sem artista no nome)"
-        BrowseKind.TITLE -> i.title
-        BrowseKind.GENRE -> i.genre ?: "(sem gênero no nome)"
-        BrowseKind.KEY -> i.key ?: "(sem tom no nome)"
+    /** Nome de exibição de cada grupo (chave sem acento/maiúsculas → grafia mais comum, preferindo com maiúsculas). */
+    @Volatile private var display: Map<String, String> = emptyMap()
+
+    private fun buildNames() {
+        val variants = HashMap<String, MutableMap<String, Int>>()
+        for (it in data) {
+            val names = it.artists + listOfNotNull(it.info.genre, it.info.key)
+            for (n in names) {
+                val m = variants.getOrPut(Meta.key(n)) { HashMap() }
+                m[n] = (m[n] ?: 0) + 1
+            }
+        }
+        display = variants.mapValues { (_, m) ->
+            val best = m.entries.sortedWith(
+                compareByDescending<Map.Entry<String, Int>> { e -> e.key.any { it.isUpperCase() } }.thenByDescending { it.value }
+            ).first().key
+            if (best.any { it.isUpperCase() }) best else best.split(' ').joinToString(" ") { w -> w.replaceFirstChar { it.uppercase() } }
+        }
+    }
+
+    fun nameOf(raw: String): String = display[Meta.key(raw)] ?: raw
+
+    /** Valores de agrupamento de um item (um item pode estar em vários artistas, por causa das participações). */
+    fun valuesOf(kind: BrowseKind, it: BrowseItem): List<String> = when (kind) {
+        BrowseKind.ARTIST -> it.artists.map { a -> nameOf(a) }.distinct().ifEmpty { listOf("(sem artista no nome)") }
+        BrowseKind.TITLE -> listOf(it.info.title)
+        BrowseKind.GENRE -> listOf(it.info.genre?.let { g -> nameOf(g) } ?: "(sem gênero no nome)")
+        BrowseKind.KEY -> listOf(it.info.key?.let { k -> nameOf(k) } ?: "(sem tom no nome)")
     }
 }
 
@@ -95,7 +122,7 @@ fun BrowseContent(
             // Lista de músicas.
             val list = remember(all, kind, group, f) {
                 all.asSequence()
-                    .filter { group == null || BrowseData.valueOf(kind, it.info) == group }
+                    .filter { group == null || BrowseData.valuesOf(kind, it).any { v -> Meta.key(v) == Meta.key(group) } }
                     .filter { f.isEmpty() || Fs.norm(it.info.title + " " + (it.info.artist ?: "")).contains(f) }
                     .sortedWith(Comparator { a, b -> NaturalOrder.compare(a.info.title, b.info.title) })
                     .take(3000)
@@ -129,7 +156,7 @@ fun BrowseContent(
         } else {
             // Lista de grupos (artistas, gêneros, tons).
             val groups = remember(all, kind, f) {
-                all.groupingBy { BrowseData.valueOf(kind, it.info) }.eachCount()
+                all.flatMap { BrowseData.valuesOf(kind, it) }.groupingBy { it }.eachCount()
                     .filter { f.isEmpty() || Fs.norm(it.key).contains(f) }
                     .entries
                     .sortedWith(Comparator { a, b ->

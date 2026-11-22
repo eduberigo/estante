@@ -100,6 +100,21 @@ object SelfTest {
                     val links = com.tom_roush.pdfbox.pdmodel.PDDocument.load(o1).use { d -> d.pages.sumOf { it.annotations.size } }
                     Log.i(tag, "flatten vetor bytes=${o1.length()} links=$links imagem bytes=${o2.length()} original=${f.length()}")
                 }
+                run {
+                    val saved = Meta.partFreq
+                    val names = listOf(
+                        "Your Song - Elton John - X - pop - C - 64", "elton john - rocket man",
+                        "ELTON JOHN - Tiny Dancer", "Kiki Dee - I Got the Music in Me",
+                        "Don't Go Breaking My Heart - Elton John & Kiki Dee", "Hold Me Closer - Elton John feat. Britney Spears",
+                        "Simon & Garfunkel - The Boxer", "Simon & Garfunkel - Mrs Robinson",
+                    )
+                    Meta.buildFreq(names.asSequence())
+                    names.forEach { n ->
+                        val i = Meta.info(n)
+                        Log.i(tag, "artista '$n' -> ${i.artist} -> ${i.artist?.let { Meta.artistsOf(it) }} chave=${i.artist?.let { a -> Meta.artistsOf(a).map { Meta.key(it) } }}")
+                    }
+                    Meta.partFreq = saved
+                }
                 Log.i(tag, "FIM OK")
             } catch (e: Throwable) {
                 Log.e(tag, "FALHOU", e)
