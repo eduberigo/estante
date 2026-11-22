@@ -54,6 +54,14 @@ adb shell input tap $((W/2)) $((H/4)); sleep 2
 dump; python3 test/tap.py "Coda" >> out/anot.txt; sleep 2
 dump; python3 test/tap.py "Concluir" >> out/anot.txt; sleep 2
 dump; cp out/ui-tmp.xml out/ui-depois.xml
+adb shell input tap $((W/2)) $((H/2)); sleep 2; dump; python3 test/tap.py "Metrônomo" >> out/anot.txt; sleep 2
+dump; python3 test/tap.py "Contagem" >> out/anot.txt; sleep 1; dump; cp out/ui-tmp.xml out/ui-metro.xml
+python3 test/tap.py "Fechar" >> out/anot.txt; sleep 1
+adb shell input tap $((W/2)) $((H/2)); sleep 2; dump; python3 test/tap.py "Imagem" >> out/anot.txt; sleep 2
+dump; cp out/ui-tmp.xml out/ui-imagem.xml; python3 test/tap.py "Legível" >> out/anot.txt; sleep 3
+dump; python3 test/tap.py "Fechar" >> out/anot.txt; sleep 1
+adb shell input tap $((W/2)) $((H/2)); sleep 2; dump; python3 test/tap.py "Recortar" >> out/anot.txt; sleep 3
+dump; cp out/ui-tmp.xml out/ui-recorte.xml; python3 test/tap.py "Só na tela" >> out/anot.txt; sleep 3
 adb exec-out screencap -p > out/3-anotado.png
 
 # 4) Autoteste de PDF/exportação
@@ -68,6 +76,7 @@ for f in out/install.txt out/atividade-1.txt out/atividade-2.txt; do echo "=====
 for f in out/ui1.xml out/ui2.xml out/ui.xml; do echo "===== TEXTOS $f"; grep -o 'text="[^"]*"' "$f" | grep -v 'text=""' | head -60; grep -o 'content-desc="[^"]*"' "$f" | grep -v '=""' | head -30; done
 echo "===== LEITOR"; grep -o 'text="[^"]*"' out/ui-leitor.xml | grep -v 'text=""' | head -30
 echo "===== ANOTACAO"; cat out/anot.txt; grep -o 'text="[^"]*"' out/ui-depois.xml | grep -v 'text=""' | head -30
+for f in out/ui-metro.xml out/ui-imagem.xml out/ui-recorte.xml; do echo "===== $f"; grep -o 'text="[^"]*"' $f | grep -v 'text=""' | head -25; done
 echo "===== AUTOTESTE"; grep -E "ESTANTE_SELFTEST" out/logcat-completo.txt; grep -E "W Estante" -A 4 out/logcat-completo.txt | head -40
 echo "===== ERROS"; grep -E "FATAL|AndroidRuntime|E/.*estante" -A 25 out/logcat-completo.txt | head -150
 echo "===== FIM"
