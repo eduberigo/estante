@@ -105,6 +105,8 @@ object Enhance {
         val lo = pct(0.005)
         // A maior parte de uma partitura é fundo: o percentil 35 (a partir do escuro) já é fundo.
         val hi = (pct(0.35) - 12).coerceAtLeast(lo + 40).coerceAtMost(255)
+        // Página quase toda branca (ou sem contraste): não mexe.
+        if (hi - lo < 20) return src
         val lut = IntArray(256) { v ->
             val f = ((v - lo).toDouble() / (hi - lo)).coerceIn(0.0, 1.0)
             (255 * f.pow(1.6)).roundToInt().coerceIn(0, 255)
