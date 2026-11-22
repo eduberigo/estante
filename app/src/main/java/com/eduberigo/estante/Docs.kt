@@ -5,6 +5,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.ImageDecoder
+import android.graphics.Matrix
+import android.graphics.RectF
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
 import android.util.LruCache
@@ -26,7 +28,8 @@ val AppScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 /** Algo que tem páginas para desenhar: um PDF ou uma imagem (1 página). */
 interface Doc {
     val pageCount: Int
-    suspend fun render(index: Int, maxW: Int, maxH: Int): Bitmap?
+    /** crop = recorte automático das margens brancas (só na tela; o arquivo não muda). */
+    suspend fun render(index: Int, maxW: Int, maxH: Int, crop: Boolean = false): Bitmap?
     fun close()
 }
 
@@ -54,18 +57,45 @@ class PdfDoc(file: File) : Doc {
 
     override val pageCount: Int = renderer.pageCount
 
-    override suspend fun render(index: Int, maxW: Int, maxH: Int): Bitmap? = mutex.withLock {
+    private val cropCache = HashMap<Int, RectF?>()
+
+    private fun detectCrop(page: PdfRenderer.Page): RectF? {
+        val w = 360
+        val h = (w.toFloat() * page.height / page.width).toInt().coerceIn(1, w * 4)
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        bmp.eraseColor(Color.WHITE)
+        page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+        val r = Crop.detect(bmp)
+        bmp.recycle()
+        return r
+    }
+
+    override suspend fun render(index: Int, maxW: Int, maxH: Int, crop: Boolean): Bitmap? = mutex.withLock {
         if (closed || index !in 0 until pageCount || maxW <= 0 || maxH <= 0) return@withLock null
         withContext(Dispatchers.IO) {
             try {
                 val page = renderer.openPage(index)
                 try {
-                    val s = minOf(maxW.toFloat() / page.width, maxH.toFloat() / page.height)
-                    val w = (page.width * s).toInt().coerceAtLeast(1)
-                    val h = (page.height * s).toInt().coerceAtLeast(1)
+                    val pw = page.width.toFloat()
+                    val ph = page.height.toFloat()
+                    val r = if (crop) {
+                        if (cropCache.containsKey(index)) cropCache[index] else detectCrop(page).also { cropCache[index] = it }
+                    } else {
+                        null
+                    }
+                    val cx = (r?.left ?: 0f) * pw
+                    val cy = (r?.top ?: 0f) * ph
+                    val cw = ((r?.width() ?: 1f) * pw).coerceAtLeast(1f)
+                    val ch = ((r?.height() ?: 1f) * ph).coerceAtLeast(1f)
+                    val s = minOf(maxW / cw, maxH / ch)
+                    val w = (cw * s).toInt().coerceAtLeast(1)
+                    val h = (ch * s).toInt().coerceAtLeast(1)
                     val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
                     bmp.eraseColor(Color.WHITE)
-                    page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    val m = Matrix()
+                    m.postScale(s, s)
+                    m.postTranslate(-cx * s, -cy * s)
+                    page.render(bmp, null, m, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                     bmp
                 } finally {
                     page.close()
@@ -91,9 +121,20 @@ class PdfDoc(file: File) : Doc {
 
 class ImageDoc(private val file: File) : Doc {
     override val pageCount: Int = 1
-    override suspend fun render(index: Int, maxW: Int, maxH: Int): Bitmap? =
+    override suspend fun render(index: Int, maxW: Int, maxH: Int, crop: Boolean): Bitmap? =
         withContext(Dispatchers.IO) {
-            try { decodeImage(file, maxW, maxH) } catch (e: Throwable) { null }
+            try {
+                if (!crop) return@withContext decodeImage(file, maxW, maxH)
+                val big = decodeImage(file, maxW * 2, maxH * 2)
+                val r = Crop.detect(big) ?: return@withContext big
+                val x = (r.left * big.width).toInt()
+                val y = (r.top * big.height).toInt()
+                val w = (r.width() * big.width).toInt().coerceIn(1, big.width - x)
+                val h = (r.height() * big.height).toInt().coerceIn(1, big.height - y)
+                Bitmap.createBitmap(big, x, y, w, h)
+            } catch (e: Throwable) {
+                null
+            }
         }
     override fun close() {}
 }
@@ -196,4 +237,49 @@ fun pdfPageCount(f: File): Int? = try {
     }
 } catch (e: Throwable) {
     null
+}
+
+/**
+ * Acha a área com conteúdo (notas, pautas, texto) e devolve as frações da página a mostrar.
+ * Pontinhos isolados (poeira de digitalização) não contam. null = nada a recortar.
+ */
+object Crop {
+    fun detect(b: Bitmap): RectF? {
+        val w = b.width
+        val h = b.height
+        if (w < 8 || h < 8) return null
+        val px = IntArray(w * h)
+        b.getPixels(px, 0, w, 0, 0, w, h)
+        val rows = IntArray(h)
+        val cols = IntArray(w)
+        for (y in 0 until h) {
+            val o = y * w
+            for (x in 0 until w) {
+                val c = px[o + x]
+                val lum = (((c shr 16) and 0xFF) * 299 + ((c shr 8) and 0xFF) * 587 + (c and 0xFF) * 114) / 1000
+                if (lum < 170) {
+                    rows[y]++
+                    cols[x]++
+                }
+            }
+        }
+        val minRow = maxOf(2, w / 150)
+        val minCol = maxOf(2, h / 150)
+        val top = rows.indexOfFirst { it >= minRow }
+        val bottom = rows.indexOfLast { it >= minRow }
+        val left = cols.indexOfFirst { it >= minCol }
+        val right = cols.indexOfLast { it >= minCol }
+        if (top < 0 || left < 0 || bottom <= top || right <= left) return null
+        val mx = 0.015f
+        val my = 0.012f
+        val r = RectF(
+            (left.toFloat() / w - mx).coerceAtLeast(0f),
+            (top.toFloat() / h - my).coerceAtLeast(0f),
+            ((right + 1).toFloat() / w + mx).coerceAtMost(1f),
+            ((bottom + 1).toFloat() / h + my).coerceAtMost(1f),
+        )
+        if (r.width() * r.height() > 0.96f) return null
+        if (r.width() < 0.15f || r.height() < 0.05f) return null
+        return r
+    }
 }

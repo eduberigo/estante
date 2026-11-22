@@ -3,11 +3,15 @@ package com.eduberigo.estante
 import android.graphics.Bitmap
 import android.os.Environment
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,6 +31,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.items
@@ -44,42 +49,48 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedIconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -95,9 +106,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.abs
+
+private val FavColor = Color(0xFFFFB300)
 
 /** Estado do explorador. Fica vivo enquanto o leitor está aberto, para voltar ao mesmo ponto. */
 class ExplorerState(private val prefs: Prefs) {
+    /** true = tela Início (pastas escolhidas + favoritos); false = dentro de uma pasta. */
+    var atHome by mutableStateOf(true)
+        private set
     var dir by mutableStateOf(startDir())
         private set
     var entries by mutableStateOf<List<Entry>>(emptyList())
@@ -105,8 +122,18 @@ class ExplorerState(private val prefs: Prefs) {
     var selected by mutableStateOf<Entry?>(null)
     var grid by mutableStateOf(prefs.grid)
         private set
-    var home by mutableStateOf(prefs.home)
+
+    var pinned by mutableStateOf(prefs.pinned)
         private set
+    var favorites by mutableStateOf(prefs.favorites)
+        private set
+
+    var autoCrop by mutableStateOf(prefs.autoCrop)
+        private set
+    var showPreviewPref by mutableStateOf(prefs.showPreview)
+        private set
+    var splitPortrait by mutableFloatStateOf(prefs.splitPortrait)
+    var splitLandscape by mutableFloatStateOf(prefs.splitLandscape)
 
     var searching by mutableStateOf(false)
     var query by mutableStateOf("")
@@ -120,15 +147,33 @@ class ExplorerState(private val prefs: Prefs) {
 
     val scrollMem = HashMap<String, Int>()
 
+    init {
+        // Migração: a versão 0.1 tinha uma única pasta "Início".
+        val old = prefs.home
+        if (old != null) {
+            if (old !in pinned) {
+                pinned = listOf(old) + pinned
+                prefs.pinned = pinned
+            }
+            prefs.home = null
+        }
+    }
+
     private fun startDir(): File {
-        val candidates = listOfNotNull(prefs.lastDir, prefs.home).map { File(it) }
-        return candidates.firstOrNull { it.isDirectory } ?: Environment.getExternalStorageDirectory()
+        val last = prefs.lastDir?.let { File(it) }
+        return last?.takeIf { it.isDirectory } ?: Environment.getExternalStorageDirectory()
     }
 
     fun navigate(to: File) {
         if (!to.isDirectory) return
         selected = null
         dir = to
+        atHome = false
+    }
+
+    fun goHome() {
+        selected = null
+        atHome = true
     }
 
     fun toggleGrid() {
@@ -136,9 +181,63 @@ class ExplorerState(private val prefs: Prefs) {
         prefs.grid = grid
     }
 
-    fun setHomeHere() {
-        home = dir.absolutePath
-        prefs.home = home
+    fun updateAutoCrop(v: Boolean) {
+        autoCrop = v
+        prefs.autoCrop = v
+    }
+
+    fun setShowPreview(v: Boolean) {
+        showPreviewPref = v
+        prefs.showPreview = v
+    }
+
+    fun saveSplits() {
+        prefs.splitPortrait = splitPortrait
+        prefs.splitLandscape = splitLandscape
+    }
+
+    fun isPinned(path: String) = path in pinned
+
+    fun togglePin(path: String) {
+        pinned = if (path in pinned) pinned - path else pinned + path
+        prefs.pinned = pinned
+    }
+
+    fun movePin(path: String, delta: Int) {
+        val i = pinned.indexOf(path)
+        val j = i + delta
+        if (i < 0 || j !in pinned.indices) return
+        val m = pinned.toMutableList()
+        m.removeAt(i)
+        m.add(j, path)
+        pinned = m
+        prefs.pinned = pinned
+    }
+
+    fun isFav(path: String) = path in favorites
+
+    fun toggleFav(path: String) {
+        favorites = if (path in favorites) favorites - path else listOf(path) + favorites
+        prefs.favorites = favorites
+    }
+
+    /** Onde a busca procura: as pastas do Início; sem nenhuma, o armazenamento interno. */
+    fun searchRoots(): List<File> =
+        pinned.map { File(it) }.filter { it.isDirectory }
+            .ifEmpty { listOf(Environment.getExternalStorageDirectory()) }
+
+    /** Caminho curto para mostrar: relativo à pasta do Início que contém o arquivo. */
+    fun shortFolder(f: File): String {
+        val parent = f.parent.orEmpty()
+        val root = pinned
+            .filter { parent == it || parent.startsWith("$it/") }
+            .maxByOrNull { it.length }
+        if (root == null) {
+            return parent.removePrefix(Environment.getExternalStorageDirectory().absolutePath)
+                .trimStart('/').replace("/", " › ").ifEmpty { "Memória interna" }
+        }
+        val rest = parent.removePrefix(root).trimStart('/')
+        return File(root).name + if (rest.isEmpty()) "" else " › " + rest.replace("/", " › ")
     }
 
     fun closeSearch() {
@@ -155,10 +254,8 @@ fun ExplorerScreen(state: ExplorerState, onOpen: (File) -> Unit) {
     val scope = rememberCoroutineScope()
     val volumes = remember { Fs.volumes(ctx) }
     var menuOpen by remember { mutableStateOf(false) }
-    var dialogEntry by remember { mutableStateOf<Entry?>(null) }
-
-    val homeDir: File = state.home?.let { File(it) }?.takeIf { it.isDirectory }
-        ?: volumes.first().dir
+    var previewEntry by remember { mutableStateOf<Entry?>(null) }
+    var actionsEntry by remember { mutableStateOf<Entry?>(null) }
 
     // Carrega a pasta atual.
     LaunchedEffect(state.dir, state.reloadTick) {
@@ -166,14 +263,30 @@ fun ExplorerScreen(state: ExplorerState, onOpen: (File) -> Unit) {
         val d = state.dir
         state.entries = withContext(Dispatchers.IO) { Fs.list(d) }
         state.loading = false
-        ctxPrefsSave(ctx, d)
+        Prefs(ctx).lastDir = d.absolutePath
     }
 
+    // Itens da tela Início.
+    val pinnedEntries by produceState(emptyList<Entry>(), state.pinned, state.reloadTick) {
+        value = state.pinned.map { Entry(File(it), Kind.DIR, 0L, 0L) }
+    }
+    val favEntries by produceState(emptyList<Entry>(), state.favorites, state.reloadTick) {
+        value = withContext(Dispatchers.IO) {
+            state.favorites.map { p ->
+                val f = File(p)
+                if (f.exists()) Fs.entry(f) else Entry(f, Fs.kindOf(f, false), 0L, 0L)
+            }
+        }
+    }
+
+    val roots = state.searchRoots()
+    val rootsKey = roots.joinToString("|") { it.absolutePath }
+
     // Monta (ou carrega) o índice da busca ao abrir a busca.
-    LaunchedEffect(state.searching, homeDir.absolutePath) {
+    LaunchedEffect(state.searching, rootsKey) {
         if (state.searching) {
             state.indexing = 0
-            SearchIndex.ensure(ctx, homeDir, force = false) { n -> state.indexing = n }
+            SearchIndex.ensure(ctx, roots, force = false) { n -> state.indexing = n }
             state.indexing = null
             state.indexVersion++
         }
@@ -189,11 +302,23 @@ fun ExplorerScreen(state: ExplorerState, onOpen: (File) -> Unit) {
 
     val atVolumeRoot = volumes.any { it.dir.absolutePath == state.dir.absolutePath } ||
         state.dir.parentFile == null
-    androidx.activity.compose.BackHandler(enabled = state.searching || !atVolumeRoot) {
-        if (state.searching) state.closeSearch() else state.dir.parentFile?.let { state.navigate(it) }
+
+    /** Voltar: fecha a busca; de uma pasta do Início (ou da raiz) volta para o Início; senão sobe. */
+    fun goBack() {
+        when {
+            state.searching -> state.closeSearch()
+            state.atHome -> Unit
+            state.isPinned(state.dir.absolutePath) || atVolumeRoot -> state.goHome()
+            else -> state.dir.parentFile?.let { state.navigate(it) } ?: state.goHome()
+        }
     }
+    BackHandler(enabled = state.searching || !state.atHome) { goBack() }
 
     fun open(e: Entry) {
+        if (!e.file.exists()) {
+            Toast.makeText(ctx, "Não encontrado: ${e.path}", Toast.LENGTH_LONG).show()
+            return
+        }
         when (e.kind) {
             Kind.DIR -> state.navigate(e.file)
             Kind.PDF, Kind.IMAGE -> onOpen(e.file)
@@ -210,30 +335,37 @@ fun ExplorerScreen(state: ExplorerState, onOpen: (File) -> Unit) {
     }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val wide = maxWidth >= 700.dp
+        val bigScreen = maxWidth >= 600.dp
+        val portrait = maxHeight >= maxWidth
+        val previewOn = state.showPreviewPref ?: bigScreen
+        val showFolderAction = state.searching || state.atHome
 
         fun click(e: Entry) {
             when {
-                e.kind == Kind.DIR -> state.navigate(e.file)
-                wide && state.selected?.path == e.path -> open(e)
-                wide -> state.selected = e
+                e.kind == Kind.DIR || !e.file.exists() -> open(e)
+                previewOn && state.selected?.path == e.path -> open(e)
+                previewOn -> state.selected = e
                 else -> open(e)
             }
         }
 
         fun longClick(e: Entry) {
-            if (e.kind == Kind.DIR) return
-            if (wide) state.selected = e else dialogEntry = e
+            if (e.kind != Kind.DIR && e.file.exists() && !previewOn) {
+                previewEntry = e
+            } else {
+                if (e.kind != Kind.DIR) state.selected = e
+                actionsEntry = e
+            }
         }
 
         Scaffold(
             topBar = {
                 TopAppBar(
                     title = {
-                        if (state.searching) {
-                            SearchField(state)
-                        } else {
-                            Text(
+                        when {
+                            state.searching -> SearchField(state)
+                            state.atHome -> Text("Início")
+                            else -> Text(
                                 Fs.volumeOf(state.dir, volumes)
                                     ?.takeIf { it.dir.absolutePath == state.dir.absolutePath }?.label
                                     ?: state.dir.name,
@@ -243,13 +375,9 @@ fun ExplorerScreen(state: ExplorerState, onOpen: (File) -> Unit) {
                         }
                     },
                     navigationIcon = {
-                        if (state.searching) {
-                            IconButton(onClick = { state.closeSearch() }) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Fechar busca")
-                            }
-                        } else if (!atVolumeRoot) {
-                            IconButton(onClick = { state.dir.parentFile?.let { state.navigate(it) } }) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Subir")
+                        if (state.searching || !state.atHome) {
+                            IconButton(onClick = { goBack() }) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Voltar")
                             }
                         }
                     },
@@ -263,7 +391,7 @@ fun ExplorerScreen(state: ExplorerState, onOpen: (File) -> Unit) {
                             IconButton(onClick = {
                                 scope.launch {
                                     state.indexing = 0
-                                    SearchIndex.ensure(ctx, homeDir, force = true) { n -> state.indexing = n }
+                                    SearchIndex.ensure(ctx, roots, force = true) { n -> state.indexing = n }
                                     state.indexing = null
                                     state.indexVersion++
                                 }
@@ -272,9 +400,27 @@ fun ExplorerScreen(state: ExplorerState, onOpen: (File) -> Unit) {
                             IconButton(onClick = { state.searching = true }) {
                                 Icon(Icons.Filled.Search, "Buscar")
                             }
-                            IconButton(onClick = { state.navigate(homeDir) }) {
-                                Icon(Icons.Filled.Home, "Início")
+                            if (!state.atHome) {
+                                val here = state.dir.absolutePath
+                                IconButton(onClick = { state.toggleFav(here) }) {
+                                    Icon(
+                                        Icons.Filled.Star, "Favoritar esta pasta",
+                                        tint = if (state.isFav(here)) FavColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                IconButton(onClick = { state.goHome() }) {
+                                    Icon(Icons.Filled.Home, "Início")
+                                }
                             }
+                        }
+                        IconButton(onClick = { state.setShowPreview(!previewOn) }) {
+                            Icon(
+                                painterResource(R.drawable.ic_split),
+                                if (previewOn) "Esconder pré-visualização" else "Mostrar pré-visualização",
+                                tint = if (previewOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (!state.searching && !state.atHome) {
                             IconButton(onClick = { state.toggleGrid() }) {
                                 if (state.grid) {
                                     Icon(Icons.AutoMirrored.Filled.List, "Ver em lista")
@@ -282,21 +428,36 @@ fun ExplorerScreen(state: ExplorerState, onOpen: (File) -> Unit) {
                                     Icon(painterResource(R.drawable.ic_grid), "Ver em grade")
                                 }
                             }
+                        }
+                        if (!state.searching) {
                             Box {
                                 IconButton(onClick = { menuOpen = true }) {
                                     Icon(Icons.Filled.MoreVert, "Mais")
                                 }
                                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                                    if (!state.atHome) {
+                                        val here = state.dir.absolutePath
+                                        val pinnedHere = state.isPinned(here)
+                                        DropdownMenuItem(
+                                            text = { Text(if (pinnedHere) "Remover esta pasta do Início" else "Adicionar esta pasta ao Início") },
+                                            onClick = {
+                                                menuOpen = false
+                                                state.togglePin(here)
+                                                Toast.makeText(
+                                                    ctx,
+                                                    if (pinnedHere) "Removida do Início" else "Adicionada ao Início",
+                                                    Toast.LENGTH_SHORT,
+                                                ).show()
+                                            },
+                                        )
+                                    }
                                     DropdownMenuItem(
-                                        text = { Text("Definir esta pasta como Início") },
-                                        onClick = {
-                                            menuOpen = false
-                                            state.setHomeHere()
-                                            Toast.makeText(ctx, "Início: ${state.dir.name}", Toast.LENGTH_SHORT).show()
-                                        },
+                                        text = { Text(if (state.autoCrop) "Recorte automático: ligado" else "Recorte automático: desligado") },
+                                        leadingIcon = { Icon(painterResource(R.drawable.ic_crop), null) },
+                                        onClick = { menuOpen = false; state.updateAutoCrop(!state.autoCrop) },
                                     )
                                     DropdownMenuItem(
-                                        text = { Text("Atualizar pasta") },
+                                        text = { Text("Atualizar") },
                                         onClick = { menuOpen = false; state.reloadTick++ },
                                     )
                                     HorizontalDivider()
@@ -320,64 +481,195 @@ fun ExplorerScreen(state: ExplorerState, onOpen: (File) -> Unit) {
             },
         ) { pad ->
             Column(Modifier.padding(pad).fillMaxSize()) {
-                if (state.searching) {
-                    SearchInfo(state, homeDir)
+                val browser: @Composable () -> Unit = {
+                    Column(Modifier.fillMaxSize()) {
+                        when {
+                            state.searching -> SearchInfo(state, roots)
+                            !state.atHome -> Breadcrumbs(state.dir, volumes) { state.navigate(it) }
+                        }
+                        if (state.loading && !state.searching && !state.atHome) {
+                            LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
+                        }
+                        Box(Modifier.weight(1f).fillMaxWidth()) {
+                            when {
+                                state.searching -> ResultsList(state, ::click, ::longClick)
+                                state.atHome -> HomeContent(state, pinnedEntries, favEntries, volumes, ::click, ::longClick)
+                                else -> FolderContent(state, ::click, ::longClick)
+                            }
+                        }
+                    }
+                }
+                if (!previewOn) {
+                    browser()
                 } else {
-                    Breadcrumbs(state.dir, volumes) { state.navigate(it) }
-                }
-                if (state.loading && !state.searching) {
-                    LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
-                }
-                Row(Modifier.fillMaxSize()) {
-                    Box(Modifier.weight(if (wide) 0.58f else 1f).fillMaxHeight()) {
-                        if (state.searching) {
-                            ResultsList(state, ::click, ::longClick)
-                        } else {
-                            FolderContent(state, ::click, ::longClick)
-                        }
+                    val preview: @Composable () -> Unit = {
+                        val sel = state.selected
+                        PreviewPane(
+                            entry = sel,
+                            crop = state.autoCrop,
+                            favorite = sel != null && state.isFav(sel.path),
+                            onToggleFav = { e -> state.toggleFav(e.path) },
+                            onOpen = { open(it) },
+                            onShowFolder = if (showFolderAction) ({ f: File -> showInFolder(f) }) else null,
+                        )
                     }
-                    if (wide) {
-                        VerticalDivider()
-                        Box(Modifier.weight(0.42f).fillMaxHeight()) {
-                            PreviewPane(
-                                entry = state.selected,
-                                onOpen = { open(it) },
-                                onShowFolder = if (state.searching) ({ f: File -> showInFolder(f) }) else null,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        dialogEntry?.let { e ->
-            Dialog(
-                onDismissRequest = { dialogEntry = null },
-                properties = DialogProperties(usePlatformDefaultWidth = false),
-            ) {
-                Surface(
-                    Modifier.fillMaxWidth(0.94f).fillMaxHeight(0.88f),
-                    shape = RoundedCornerShape(16.dp),
-                ) {
-                    PreviewPane(
-                        entry = e,
-                        onOpen = { dialogEntry = null; open(it) },
-                        onShowFolder = if (state.searching) ({ f: File -> dialogEntry = null; showInFolder(f) }) else null,
+                    SplitLayout(
+                        portrait = portrait,
+                        fraction = if (portrait) state.splitPortrait else state.splitLandscape,
+                        onFraction = { if (portrait) state.splitPortrait = it else state.splitLandscape = it },
+                        onDone = { state.saveSplits() },
+                        preview = preview,
+                        browser = browser,
                     )
                 }
             }
         }
+
+        previewEntry?.let { e ->
+            Dialog(
+                onDismissRequest = { previewEntry = null },
+                properties = DialogProperties(usePlatformDefaultWidth = false),
+            ) {
+                Surface(
+                    Modifier.fillMaxWidth(0.96f).fillMaxHeight(0.92f),
+                    shape = RoundedCornerShape(16.dp),
+                ) {
+                    PreviewPane(
+                        entry = e,
+                        crop = state.autoCrop,
+                        favorite = state.isFav(e.path),
+                        onToggleFav = { x -> state.toggleFav(x.path) },
+                        onOpen = { previewEntry = null; open(it) },
+                        onShowFolder = if (showFolderAction) ({ f: File -> previewEntry = null; showInFolder(f) }) else null,
+                    )
+                }
+            }
+        }
+
+        actionsEntry?.let { e ->
+            ActionsDialog(
+                e = e,
+                state = state,
+                onDismiss = { actionsEntry = null },
+                onShowFolder = if (showFolderAction && e.kind != Kind.DIR) ({ actionsEntry = null; showInFolder(e.file) }) else null,
+            )
+        }
     }
 }
 
-private fun ctxPrefsSave(ctx: android.content.Context, d: File) {
-    Prefs(ctx).lastDir = d.absolutePath
+/**
+ * Pré-visualização + lista com divisória arrastável.
+ * Em pé: pré-visualização em cima, lista embaixo. Deitado: lista à esquerda, pré-visualização à direita.
+ */
+@Composable
+private fun SplitLayout(
+    portrait: Boolean,
+    fraction: Float,
+    onFraction: (Float) -> Unit,
+    onDone: () -> Unit,
+    preview: @Composable () -> Unit,
+    browser: @Composable () -> Unit,
+) {
+    val frac by rememberUpdatedState(fraction.coerceIn(0.2f, 0.85f))
+    val setFrac by rememberUpdatedState(onFraction)
+    val done by rememberUpdatedState(onDone)
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val totalPx = if (portrait) constraints.maxHeight.toFloat() else constraints.maxWidth.toFloat()
+        val total by rememberUpdatedState(totalPx)
+        val handle: @Composable () -> Unit = {
+            Box(
+                Modifier
+                    .then(if (portrait) Modifier.fillMaxWidth().height(22.dp) else Modifier.fillMaxHeight().width(22.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                    .pointerInput(portrait) {
+                        detectDragGestures(onDragEnd = { done() }, onDragCancel = { done() }) { change, amount ->
+                            change.consume()
+                            val d = if (portrait) amount.y / total else -amount.x / total
+                            setFrac((frac + d).coerceIn(0.2f, 0.85f))
+                        }
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    Modifier
+                        .then(if (portrait) Modifier.size(width = 56.dp, height = 5.dp) else Modifier.size(width = 5.dp, height = 56.dp))
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(MaterialTheme.colorScheme.outline)
+                )
+            }
+        }
+        if (portrait) {
+            Column(Modifier.fillMaxSize()) {
+                Box(Modifier.weight(frac).fillMaxWidth()) { preview() }
+                handle()
+                Box(Modifier.weight(1f - frac).fillMaxWidth()) { browser() }
+            }
+        } else {
+            Row(Modifier.fillMaxSize()) {
+                Box(Modifier.weight(1f - frac).fillMaxHeight()) { browser() }
+                handle()
+                Box(Modifier.weight(frac).fillMaxHeight()) { preview() }
+            }
+        }
+    }
 }
 
 private fun appVersion(ctx: android.content.Context): String = try {
     ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "?"
 } catch (e: Exception) {
     "?"
+}
+
+/** Menu ao segurar o dedo: Início, favoritos, ordem. */
+@Composable
+private fun ActionsDialog(e: Entry, state: ExplorerState, onDismiss: () -> Unit, onShowFolder: (() -> Unit)?) {
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = RoundedCornerShape(16.dp)) {
+            Column(Modifier.padding(vertical = 8.dp).fillMaxWidth()) {
+                Text(
+                    e.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                )
+                Text(
+                    state.shortFolder(e.file),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 8.dp),
+                )
+                HorizontalDivider()
+                val pinned = state.isPinned(e.path)
+                if (e.kind == Kind.DIR) {
+                    ActionRow(if (pinned) "Remover do Início" else "Adicionar ao Início") {
+                        state.togglePin(e.path); onDismiss()
+                    }
+                }
+                ActionRow(if (state.isFav(e.path)) "Remover dos favoritos" else "Adicionar aos favoritos") {
+                    state.toggleFav(e.path); onDismiss()
+                }
+                if (pinned && state.atHome && !state.searching) {
+                    val i = state.pinned.indexOf(e.path)
+                    if (i > 0) ActionRow("Mover para antes") { state.movePin(e.path, -1); onDismiss() }
+                    if (i < state.pinned.lastIndex) ActionRow("Mover para depois") { state.movePin(e.path, 1); onDismiss() }
+                }
+                if (onShowFolder != null) ActionRow("Mostrar na pasta") { onShowFolder() }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ActionRow(label: String, onClick: () -> Unit) {
+    Text(
+        label,
+        style = MaterialTheme.typography.bodyLarge,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 14.dp),
+    )
 }
 
 @Composable
@@ -401,12 +693,17 @@ private fun SearchField(state: ExplorerState) {
 }
 
 @Composable
-private fun SearchInfo(state: ExplorerState, homeDir: File) {
+private fun SearchInfo(state: ExplorerState, roots: List<File>) {
     val n = state.indexing
+    val where = when {
+        state.pinned.isEmpty() -> "memória interna"
+        roots.size == 1 -> roots[0].name
+        else -> "${roots.size} pastas do Início"
+    }
     val text = when {
-        n != null -> "Indexando ${homeDir.name}… $n arquivos"
-        state.query.isBlank() -> "Buscando em ${homeDir.name} (${SearchIndex.size} arquivos). Várias palavras: todas precisam aparecer."
-        else -> "${state.results.size}${if (state.results.size >= 400) "+" else ""} resultados em ${homeDir.name}"
+        n != null -> "Indexando $where… $n arquivos"
+        state.query.isBlank() -> "Buscando em $where (${SearchIndex.size} arquivos). Várias palavras: todas precisam aparecer."
+        else -> "${state.results.size}${if (state.results.size >= 400) "+" else ""} resultados em $where"
     }
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
         Text(text, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -459,6 +756,108 @@ private fun Breadcrumbs(dir: File, volumes: List<Volume>, onClick: (File) -> Uni
     }
 }
 
+/** Tela Início: pastas escolhidas, favoritos e os armazenamentos do aparelho. */
+@Composable
+private fun HomeContent(
+    state: ExplorerState,
+    pinned: List<Entry>,
+    favs: List<Entry>,
+    volumes: List<Volume>,
+    onClick: (Entry) -> Unit,
+    onLong: (Entry) -> Unit,
+) {
+    val gs = remember { LazyGridState(state.scrollMem["#home"] ?: 0) }
+    DisposableEffect(gs) { onDispose { state.scrollMem["#home"] = gs.firstVisibleItemIndex } }
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(120.dp),
+        state = gs,
+        contentPadding = PaddingValues(6.dp),
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        item(span = { GridItemSpan(maxLineSpan) }, key = "h-pastas") { SectionHeader("Pastas") }
+        if (pinned.isEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }, key = "e-pastas") {
+                HintText(
+                    "Nenhuma pasta escolhida ainda. Entre numa pasta (por Armazenamento, abaixo) e, " +
+                        "no menu ⋮, toque em \"Adicionar esta pasta ao Início\". " +
+                        "Ou segure o dedo sobre uma pasta."
+                )
+            }
+        }
+        items(pinned.size, key = { "p:" + pinned[it].path }) { i ->
+            val e = pinned[i]
+            GridItem(
+                e = e,
+                selected = false,
+                fav = state.isFav(e.path),
+                subtitle = e.file.parentFile?.name,
+                dim = !e.file.isDirectory,
+                onClick = { onClick(e) },
+                onLong = { onLong(e) },
+            )
+        }
+
+        item(span = { GridItemSpan(maxLineSpan) }, key = "h-favs") { SectionHeader("Favoritos") }
+        if (favs.isEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }, key = "e-favs") {
+                HintText(
+                    "Nenhum favorito ainda. Toque na estrela ★ na pré-visualização de uma partitura, " +
+                        "ou segure o dedo sobre um arquivo ou pasta."
+                )
+            }
+        }
+        items(favs.size, key = { "f:" + favs[it].path }) { i ->
+            val e = favs[i]
+            GridItem(
+                e = e,
+                selected = state.selected?.path == e.path,
+                fav = false,
+                subtitle = e.file.parentFile?.name,
+                dim = !e.file.exists(),
+                onClick = { onClick(e) },
+                onLong = { onLong(e) },
+            )
+        }
+
+        item(span = { GridItemSpan(maxLineSpan) }, key = "h-vol") { SectionHeader("Armazenamento") }
+        items(volumes.size, key = { "v:" + volumes[it].dir.absolutePath }) { i ->
+            val v = volumes[i]
+            val e = Entry(v.dir, Kind.DIR, 0L, 0L)
+            GridItem(
+                e = e,
+                label = v.label,
+                selected = false,
+                fav = false,
+                subtitle = null,
+                dim = false,
+                onClick = { onClick(e) },
+                onLong = { onLong(e) },
+                icon = R.drawable.ic_storage,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SectionHeader(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(start = 8.dp, top = 14.dp, bottom = 4.dp),
+    )
+}
+
+@Composable
+private fun HintText(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+    )
+}
+
 @Composable
 private fun FolderContent(state: ExplorerState, onClick: (Entry) -> Unit, onLong: (Entry) -> Unit) {
     val entries = state.entries
@@ -481,14 +880,23 @@ private fun FolderContent(state: ExplorerState, onClick: (Entry) -> Unit, onLong
             }
         }
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(132.dp),
+            columns = GridCells.Adaptive(120.dp),
             state = gs,
             contentPadding = PaddingValues(6.dp),
             modifier = Modifier.fillMaxSize(),
         ) {
             items(entries.size, key = { entries[it].path }) { i ->
                 val e = entries[i]
-                GridItem(e, state.selected?.path == e.path, { onClick(e) }, { onLong(e) })
+                GridItem(
+                    e = e,
+                    selected = state.selected?.path == e.path,
+                    fav = state.isFav(e.path),
+                    subtitle = null,
+                    dim = false,
+                    onClick = { onClick(e) },
+                    onLong = { onLong(e) },
+                    pinnedMark = e.kind == Kind.DIR && state.isPinned(e.path),
+                )
             }
         }
     } else {
@@ -504,7 +912,7 @@ private fun FolderContent(state: ExplorerState, onClick: (Entry) -> Unit, onLong
         }
         LazyColumn(state = ls, modifier = Modifier.fillMaxSize()) {
             items(entries, key = { it.path }) { e ->
-                ListItemRow(e, null, state.selected?.path == e.path, { onClick(e) }, { onLong(e) })
+                ListItemRow(e, null, state.selected?.path == e.path, state.isFav(e.path), { onClick(e) }, { onLong(e) })
             }
         }
     }
@@ -512,20 +920,30 @@ private fun FolderContent(state: ExplorerState, onClick: (Entry) -> Unit, onLong
 
 @Composable
 private fun ResultsList(state: ExplorerState, onClick: (Entry) -> Unit, onLong: (Entry) -> Unit) {
-    val home = state.home
     LazyColumn(Modifier.fillMaxSize()) {
         items(state.results, key = { it.path }) { e ->
-            val folder = e.file.parent.orEmpty().let { p ->
-                if (home != null) p.removePrefix(home).trimStart('/').ifEmpty { "(Início)" } else p
-            }
-            ListItemRow(e, folder, state.selected?.path == e.path, { onClick(e) }, { onLong(e) })
+            ListItemRow(
+                e, state.shortFolder(e.file), state.selected?.path == e.path, state.isFav(e.path),
+                { onClick(e) }, { onLong(e) },
+            )
         }
     }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun GridItem(e: Entry, selected: Boolean, onClick: () -> Unit, onLong: () -> Unit) {
+private fun GridItem(
+    e: Entry,
+    selected: Boolean,
+    fav: Boolean,
+    subtitle: String?,
+    dim: Boolean,
+    onClick: () -> Unit,
+    onLong: () -> Unit,
+    label: String = e.title,
+    icon: Int? = null,
+    pinnedMark: Boolean = false,
+) {
     val bg = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent
     Column(
         Modifier
@@ -533,7 +951,8 @@ private fun GridItem(e: Entry, selected: Boolean, onClick: () -> Unit, onLong: (
             .clip(RoundedCornerShape(10.dp))
             .background(bg)
             .combinedClickable(onClick = onClick, onLongClick = onLong)
-            .padding(6.dp),
+            .padding(6.dp)
+            .alpha(if (dim) 0.4f else 1f),
     ) {
         Box(
             Modifier
@@ -543,15 +962,42 @@ private fun GridItem(e: Entry, selected: Boolean, onClick: () -> Unit, onLong: (
                 .background(MaterialTheme.colorScheme.surfaceVariant),
             contentAlignment = Alignment.Center,
         ) {
-            KindVisual(e, 320, Modifier.fillMaxSize(), iconSize = 56)
+            if (icon != null) {
+                Icon(painterResource(icon), null, Modifier.size(56.dp), tint = MaterialTheme.colorScheme.primary)
+            } else {
+                KindVisual(e, 320, Modifier.fillMaxSize(), iconSize = 56)
+            }
+            if (fav) {
+                Icon(
+                    Icons.Filled.Star, "Favorito",
+                    Modifier.align(Alignment.TopEnd).padding(4.dp).size(20.dp),
+                    tint = FavColor,
+                )
+            }
+            if (pinnedMark) {
+                Icon(
+                    Icons.Filled.Home, "No Início",
+                    Modifier.align(Alignment.TopStart).padding(4.dp).size(18.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
         }
         Spacer(Modifier.height(4.dp))
         Text(
-            e.title,
+            if (dim) "$label (não encontrado)" else label,
             style = MaterialTheme.typography.bodySmall,
             maxLines = 3,
             overflow = TextOverflow.Ellipsis,
         )
+        if (subtitle != null) {
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
@@ -561,6 +1007,7 @@ private fun ListItemRow(
     e: Entry,
     subtitle: String?,
     selected: Boolean,
+    fav: Boolean,
     onClick: () -> Unit,
     onLong: () -> Unit,
 ) {
@@ -570,17 +1017,17 @@ private fun ListItemRow(
             .fillMaxWidth()
             .background(bg)
             .combinedClickable(onClick = onClick, onLongClick = onLong)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .padding(horizontal = 12.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             Modifier
-                .size(width = 44.dp, height = 56.dp)
+                .size(width = 40.dp, height = 52.dp)
                 .clip(RoundedCornerShape(3.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant),
             contentAlignment = Alignment.Center,
         ) {
-            KindVisual(e, 120, Modifier.fillMaxSize(), iconSize = 28)
+            KindVisual(e, 120, Modifier.fillMaxSize(), iconSize = 26)
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
@@ -593,6 +1040,9 @@ private fun ListItemRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+        }
+        if (fav) {
+            Icon(Icons.Filled.Star, "Favorito", Modifier.padding(start = 8.dp).size(20.dp), tint = FavColor)
         }
     }
 }
@@ -612,7 +1062,7 @@ private fun KindVisual(e: Entry, thumbW: Int, modifier: Modifier, iconSize: Int)
         Kind.PDF, Kind.IMAGE -> {
             val ctx = LocalContext.current
             val bmp by produceState(Thumbs.cached(e, thumbW), e.path, e.modified) {
-                if (value == null) value = Thumbs.load(ctx, e, thumbW)
+                if (value == null && e.file.exists()) value = Thumbs.load(ctx, e, thumbW)
             }
             val b = bmp
             if (b != null) {
@@ -628,13 +1078,23 @@ private fun KindVisual(e: Entry, thumbW: Int, modifier: Modifier, iconSize: Int)
     }
 }
 
-/** Painel de pré-visualização: folheia as páginas sem abrir o leitor. */
+/**
+ * Pré-visualização: a página ocupa o máximo de espaço.
+ * Toque na esquerda/direita da página ou deslize para trocar de página; toque no meio abre o leitor.
+ */
 @Composable
-fun PreviewPane(entry: Entry?, onOpen: (Entry) -> Unit, onShowFolder: ((File) -> Unit)?) {
+fun PreviewPane(
+    entry: Entry?,
+    crop: Boolean,
+    favorite: Boolean,
+    onToggleFav: (Entry) -> Unit,
+    onOpen: (Entry) -> Unit,
+    onShowFolder: ((File) -> Unit)?,
+) {
     if (entry == null) {
         Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
             Text(
-                "Toque num arquivo para pré-visualizar.\nToque de novo para abrir.",
+                "Toque num arquivo para pré-visualizar.\nToque de novo para abrir.\nSegure o dedo para mais opções.",
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -645,23 +1105,52 @@ fun PreviewPane(entry: Entry?, onOpen: (Entry) -> Unit, onShowFolder: ((File) ->
     val doc = remember(entry.path) { if (viewable) openDoc(entry.file) else null }
     DisposableEffect(doc) { onDispose { doc?.close() } }
     var page by remember(entry.path) { mutableIntStateOf(0) }
+    val pages = doc?.pageCount ?: 0
+    val pageNow by rememberUpdatedState(page)
+    val pagesNow by rememberUpdatedState(pages)
+    val openNow by rememberUpdatedState { onOpen(entry) }
+    fun go(d: Int) {
+        val t = (pageNow + d).coerceIn(0, (pagesNow - 1).coerceAtLeast(0))
+        page = t
+    }
 
-    Column(Modifier.fillMaxSize().padding(12.dp)) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 6.dp)) {
         BoxWithConstraints(
             Modifier
                 .weight(1f)
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(6.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant)
-                .clickable { onOpen(entry) },
+                .pointerInput(entry.path) {
+                    detectTapGestures { p ->
+                        val x = p.x / size.width
+                        when {
+                            x < 0.25f && pagesNow > 1 -> go(-1)
+                            x > 0.75f && pagesNow > 1 -> go(1)
+                            else -> openNow()
+                        }
+                    }
+                }
+                .pointerInput(entry.path) {
+                    var total = 0f
+                    detectHorizontalDragGestures(
+                        onDragStart = { total = 0f },
+                        onDragEnd = {
+                            if (abs(total) > 60f) go(if (total < 0) 1 else -1)
+                        },
+                    ) { change, amount ->
+                        change.consume()
+                        total += amount
+                    }
+                },
             contentAlignment = Alignment.Center,
         ) {
             val w = constraints.maxWidth
             val h = constraints.maxHeight
             when {
                 doc != null -> {
-                    val bmp by produceState<Bitmap?>(null, doc, page, w, h) {
-                        value = doc.render(page, w, h)
+                    val bmp by produceState<Bitmap?>(null, doc, page, w, h, crop) {
+                        value = doc.render(page, w, h, crop)
                     }
                     val b = bmp
                     if (b != null) {
@@ -678,48 +1167,86 @@ fun PreviewPane(entry: Entry?, onOpen: (Entry) -> Unit, onShowFolder: ((File) ->
             }
         }
 
-        val pages = doc?.pageCount ?: 0
-        if (pages > 1) {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(enabled = page > 0, onClick = { page-- }) {
-                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Página anterior")
-                }
-                Text("${page + 1} / $pages")
-                IconButton(enabled = page < pages - 1, onClick = { page++ }) {
-                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Próxima página")
+        Spacer(Modifier.height(6.dp))
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val oneRow = maxWidth >= 560.dp
+            val pager: @Composable () -> Unit = {
+                if (pages > 1) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        FilledTonalIconButton(
+                            enabled = page > 0,
+                            onClick = { go(-1) },
+                            modifier = Modifier.size(56.dp),
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Página anterior", Modifier.size(36.dp))
+                        }
+                        Text(
+                            "${page + 1} / $pages",
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.padding(horizontal = 12.dp),
+                        )
+                        FilledTonalIconButton(
+                            enabled = page < pages - 1,
+                            onClick = { go(1) },
+                            modifier = Modifier.size(56.dp),
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Próxima página", Modifier.size(36.dp))
+                        }
+                    }
                 }
             }
-        } else {
-            Spacer(Modifier.height(8.dp))
-        }
-
-        Text(entry.title, style = MaterialTheme.typography.titleMedium, maxLines = 3, overflow = TextOverflow.Ellipsis)
-        Text(
-            entry.file.parentFile?.name.orEmpty(),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        val kindLabel = when (entry.kind) {
-            Kind.PDF -> "PDF • $pages ${if (pages == 1) "página" else "páginas"}"
-            Kind.IMAGE -> "Imagem"
-            else -> entry.file.extension.uppercase().ifEmpty { "Arquivo" }
-        }
-        Text(
-            "$kindLabel • ${Fs.humanSize(entry.size)} • ${Fs.humanDate(entry.modified)}",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(10.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { onOpen(entry) }) {
-                Text(if (viewable) "Abrir" else "Abrir com outro app")
+            val info: @Composable (Modifier) -> Unit = { m ->
+                Column(m) {
+                    Text(entry.title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    val kindLabel = when (entry.kind) {
+                        Kind.PDF -> "$pages ${if (pages == 1) "pág." else "págs."}"
+                        Kind.IMAGE -> "Imagem"
+                        else -> entry.file.extension.uppercase().ifEmpty { "Arquivo" }
+                    }
+                    Text(
+                        "${entry.file.parentFile?.name.orEmpty()} • $kindLabel • ${Fs.humanSize(entry.size)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
-            if (onShowFolder != null) {
-                OutlinedButton(onClick = { onShowFolder(entry.file) }) { Text("Mostrar na pasta") }
+            val actions: @Composable () -> Unit = {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (favorite) {
+                        FilledTonalIconButton(onClick = { onToggleFav(entry) }, modifier = Modifier.size(48.dp)) {
+                            Icon(Icons.Filled.Star, "Remover dos favoritos", tint = FavColor)
+                        }
+                    } else {
+                        OutlinedIconButton(onClick = { onToggleFav(entry) }, modifier = Modifier.size(48.dp)) {
+                            Icon(Icons.Filled.Star, "Adicionar aos favoritos", tint = MaterialTheme.colorScheme.outline)
+                        }
+                    }
+                    if (onShowFolder != null) {
+                        OutlinedButton(onClick = { onShowFolder(entry.file) }) { Text("Pasta") }
+                    }
+                    Button(onClick = { onOpen(entry) }) {
+                        Text(if (viewable) "Abrir" else "Abrir com…")
+                    }
+                }
+            }
+            if (oneRow) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    pager()
+                    Spacer(Modifier.width(12.dp))
+                    info(Modifier.weight(1f))
+                    Spacer(Modifier.width(8.dp))
+                    actions()
+                }
+            } else {
+                Column(Modifier.fillMaxWidth()) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) { pager() }
+                    Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        info(Modifier.weight(1f))
+                        actions()
+                    }
+                }
             }
         }
     }

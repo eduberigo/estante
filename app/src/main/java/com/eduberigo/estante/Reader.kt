@@ -56,6 +56,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
@@ -76,7 +77,7 @@ private val prevKeys = setOf(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun ReaderScreen(file: File, onClose: () -> Unit) {
+fun ReaderScreen(file: File, autoCrop: Boolean, onAutoCrop: (Boolean) -> Unit, onClose: () -> Unit) {
     val activity = LocalContext.current as MainActivity
     val doc = remember(file) { openDoc(file) }
     DisposableEffect(doc) { onDispose { doc?.close() } }
@@ -138,7 +139,7 @@ fun ReaderScreen(file: File, onClose: () -> Unit) {
             beyondViewportPageCount = 1,
             key = { it },
         ) { index ->
-            PageView(doc, index) { frac ->
+            PageView(doc, index, autoCrop) { frac ->
                 when {
                     frac < 0.3f -> turn(-1)
                     frac > 0.7f -> turn(1)
@@ -173,6 +174,13 @@ fun ReaderScreen(file: File, onClose: () -> Unit) {
                     color = Color.White,
                     modifier = Modifier.padding(horizontal = 12.dp),
                 )
+                IconButton(onClick = { onAutoCrop(!autoCrop) }) {
+                    Icon(
+                        painterResource(R.drawable.ic_crop),
+                        if (autoCrop) "Desligar recorte automático" else "Ligar recorte automático",
+                        tint = if (autoCrop) Color(0xFF8AB4F8) else Color.Gray,
+                    )
+                }
             }
             if (count > 1) {
                 var pos by remember(pager.currentPage) { mutableFloatStateOf(pager.currentPage.toFloat()) }
@@ -201,14 +209,14 @@ fun ReaderScreen(file: File, onClose: () -> Unit) {
 
 /** Uma página: desenhada no tamanho da tela; pinça para ampliar; toque nas bordas vira. */
 @Composable
-private fun PageView(doc: Doc, index: Int, onTap: (Float) -> Unit) {
+private fun PageView(doc: Doc, index: Int, crop: Boolean, onTap: (Float) -> Unit) {
     val tapHandler by rememberUpdatedState(onTap)
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wPx = constraints.maxWidth
         val hPx = constraints.maxHeight
-        val bmp by produceState<Bitmap?>(null, doc, index, wPx, hPx) {
+        val bmp by produceState<Bitmap?>(null, doc, index, wPx, hPx, crop) {
             // Um pouco acima do tamanho da tela, para o zoom não borrar tanto.
-            value = doc.render(index, (wPx * 1.3f).toInt(), (hPx * 1.3f).toInt())
+            value = doc.render(index, (wPx * 1.3f).toInt(), (hPx * 1.3f).toInt(), crop)
         }
         var scale by remember { mutableFloatStateOf(1f) }
         var offset by remember { mutableStateOf(Offset.Zero) }

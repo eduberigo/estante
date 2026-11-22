@@ -89,6 +89,14 @@ class MainActivity : ComponentActivity() {
 class Prefs(ctx: Context) {
     private val sp = ctx.getSharedPreferences("estante", Context.MODE_PRIVATE)
 
+    private fun getList(k: String): List<String> =
+        sp.getString(k, null)?.split('\n')?.filter { it.isNotBlank() } ?: emptyList()
+
+    private fun putList(k: String, v: List<String>) {
+        sp.edit().putString(k, v.joinToString("\n")).apply()
+    }
+
+    /** Versão antiga tinha uma única pasta Início; mantida só para migrar. */
     var home: String?
         get() = sp.getString("home", null)
         set(v) { sp.edit().putString("home", v).apply() }
@@ -100,6 +108,34 @@ class Prefs(ctx: Context) {
     var grid: Boolean
         get() = sp.getBoolean("grid", true)
         set(v) { sp.edit().putBoolean("grid", v).apply() }
+
+    var autoCrop: Boolean
+        get() = sp.getBoolean("autoCrop", true)
+        set(v) { sp.edit().putBoolean("autoCrop", v).apply() }
+
+    /** null = automático (ligada no tablet, desligada no celular). */
+    var showPreview: Boolean?
+        get() = if (sp.contains("showPreview")) sp.getBoolean("showPreview", true) else null
+        set(v) { if (v == null) sp.edit().remove("showPreview").apply() else sp.edit().putBoolean("showPreview", v).apply() }
+
+    /** Fração da tela para a pré-visualização: em pé (em cima) e deitado (à direita). */
+    var splitPortrait: Float
+        get() = sp.getFloat("splitPortrait", 0.55f)
+        set(v) { sp.edit().putFloat("splitPortrait", v).apply() }
+
+    var splitLandscape: Float
+        get() = sp.getFloat("splitLandscape", 0.45f)
+        set(v) { sp.edit().putFloat("splitLandscape", v).apply() }
+
+    /** Pastas fixadas na tela Início, na ordem escolhida. */
+    var pinned: List<String>
+        get() = getList("pinned")
+        set(v) = putList("pinned", v)
+
+    /** Arquivos e pastas favoritos, do mais recente para o mais antigo. */
+    var favorites: List<String>
+        get() = getList("favorites")
+        set(v) = putList("favorites", v)
 }
 
 @Composable
@@ -128,7 +164,12 @@ fun App(hasPermission: Boolean, requestPermission: () -> Unit) {
     val r = reading
     if (r != null) {
         BackHandler { reading = null }
-        ReaderScreen(r, onClose = { reading = null })
+        ReaderScreen(
+            r,
+            autoCrop = explorer.autoCrop,
+            onAutoCrop = { explorer.updateAutoCrop(it) },
+            onClose = { reading = null },
+        )
     } else {
         ExplorerScreen(explorer, onOpen = { reading = it })
     }
