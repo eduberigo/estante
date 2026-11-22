@@ -145,7 +145,8 @@ fun ReaderScreen(
             if (secs >= 30) played(file, secs)
         }
     }
-    val doc = remember(file) { openDoc(file) }
+    var reloadKey by remember { mutableStateOf(0) }
+    val doc = remember(file, reloadKey) { openDoc(file) }
     DisposableEffect(doc) { onDispose { doc?.close() } }
 
     // Tela cheia e tela sempre ligada enquanto lê.
@@ -192,7 +193,7 @@ fun ReaderScreen(
 
     val notes = remember(file) { mutableStateMapOf<String, FileNotes>() }
     val undo = remember(file) { mutableStateListOf<Pair<String, FileNotes>>() }
-    LaunchedEffect(file) {
+    LaunchedEffect(file, reloadKey) {
         val paths = imageFiles?.map { it.absolutePath } ?: listOf(file.absolutePath)
         val loaded = withContext(Dispatchers.IO) { paths.associateWith { AnnStore.load(ctx, it) } }
         notes.putAll(loaded)
@@ -222,6 +223,9 @@ fun ReaderScreen(
     var pendingAnchor by remember { mutableStateOf<Pair<Int, Offset>?>(null) }
     var pendingJump by remember { mutableStateOf<Pair<Int, Offset>?>(null) }
     var anchorList by remember { mutableStateOf(false) }
+    var cropEdit by remember { mutableStateOf(false) }
+    var cropFiles by remember { mutableStateOf<Pair<List<File>, (File, Int) -> RectF?>?>(null) }
+    val volumes = remember { Fs.volumes(ctx) }
 
     fun goTo(page: Int) {
         val t = page.coerceIn(0, count - 1)
@@ -273,6 +277,7 @@ fun ReaderScreen(
                 index = index,
                 crop = autoCrop,
                 enhance = enhance,
+                manual = n?.cropFor(pg),
                 anns = n?.pages?.get(pg).orEmpty(),
                 anchors = n?.anchors.orEmpty().filter { it.page == pg },
                 jumps = n?.jumps.orEmpty().filter { it.page == pg },
@@ -415,6 +420,7 @@ fun ReaderScreen(
                     BarButton("✎ Anotar", true) { tool = Tool.PEN; showBars = false }
                     BarButton("⚓ Âncoras${if (anchors.isNotEmpty()) " (${anchors.size})" else ""}", true) { anchorList = true }
                     BarButton("Legível", enhance) { onEnhance(!enhance) }
+                    BarButton("✂ Recortar", true) { cropEdit = true; showBars = false }
                     IconButton(onClick = { onAutoCrop(!autoCrop) }) {
                         Icon(
                             painterResource(R.drawable.ic_crop),
@@ -468,6 +474,45 @@ fun ReaderScreen(
                 onDone = { tool = null },
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
+        }
+
+        if (cropEdit) {
+            val cur = pager.currentPage
+            val (cpath, cpg) = keyOf(cur)
+            CropEditor(
+                doc = doc,
+                index = cur,
+                initial = notes[cpath]?.cropFor(cpg),
+                onCancel = { cropEdit = false },
+            ) { rect, all, toFile ->
+                cropEdit = false
+                val targets: List<String> = if (imageFiles != null && all) imageFiles.map { it.absolutePath } else listOf(cpath)
+                fun clearCrops(p: String) = update(p) { it.copy(crops = emptyMap()) }
+                if (!toFile) {
+                    targets.forEach { p ->
+                        update(p) { nn ->
+                            val key = if (imageFiles != null) 0 else if (all) -1 else cpg
+                            val base = if (all) emptyMap() else nn.crops
+                            nn.copy(crops = if (rect == null) base - key else base + (key to listOf(rect.left, rect.top, rect.right, rect.bottom)))
+                        }
+                    }
+                } else if (rect != null) {
+                    targets.forEach { clearCrops(it) }
+                    val files = targets.map { File(it) }
+                    val one = RectF(rect)
+                    cropFiles = files to { f: File, i: Int ->
+                        if (all || imageFiles != null) one else if (f.absolutePath == file.absolutePath && i == cpg) one else null
+                    }
+                }
+            }
+        }
+
+        cropFiles?.let { (fs, rf) ->
+            CropFileDialog(fs, rf, volumes, lib) { _ ->
+                cropFiles = null
+                notes.clear()
+                reloadKey++
+            }
         }
 
         if (savePdf && imageFiles != null) {
@@ -737,6 +782,7 @@ private fun PageView(
     index: Int,
     crop: Boolean,
     enhance: Boolean,
+    manual: RectF?,
     anns: List<Ann>,
     anchors: List<Anchor>,
     jumps: List<Jump>,
@@ -757,9 +803,9 @@ private fun PageView(
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wPx = constraints.maxWidth
         val hPx = constraints.maxHeight
-        val rendered by produceState<Pair<Bitmap, RectF>?>(null, doc, index, wPx, hPx, crop, enhance) {
+        val rendered by produceState<Pair<Bitmap, RectF>?>(null, doc, index, wPx, hPx, crop, enhance, manual) {
             // Um pouco acima do tamanho da tela, para o zoom não borrar tanto.
-            val b = doc.render(index, (wPx * 1.3f).toInt(), (hPx * 1.3f).toInt(), crop, enhance)
+            val b = doc.render(index, (wPx * 1.3f).toInt(), (hPx * 1.3f).toInt(), crop, enhance, manual)
             value = b?.let { it to RectF(doc.shownRect(index)) }
         }
         var scale by remember { mutableFloatStateOf(1f) }

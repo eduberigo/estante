@@ -40,8 +40,17 @@ data class FileNotes(
     val pages: Map<Int, List<Ann>> = emptyMap(),
     val anchors: List<Anchor> = emptyList(),
     val jumps: List<Jump> = emptyList(),
+    /** Recorte manual (só na tela), em frações l,t,r,b. Chave -1 = todas as páginas. */
+    val crops: Map<Int, List<Float>> = emptyMap(),
+    /** Metrônomo desta música. */
+    val bpm: Int? = null,
+    val beats: Int? = null,
 ) {
-    fun isEmpty() = pages.values.all { it.isEmpty() } && anchors.isEmpty() && jumps.isEmpty()
+    fun isEmpty() = pages.values.all { it.isEmpty() } && anchors.isEmpty() && jumps.isEmpty() &&
+        crops.isEmpty() && bpm == null && beats == null
+
+    fun cropFor(page: Int): android.graphics.RectF? =
+        (crops[page] ?: crops[-1])?.takeIf { it.size == 4 }?.let { android.graphics.RectF(it[0], it[1], it[2], it[3]) }
 
     fun add(page: Int, a: Ann) = copy(pages = pages + (page to (pages[page].orEmpty() + a)))
 }
@@ -124,7 +133,18 @@ object AnnStore {
                 Jump(a.getString("to"), a.getInt("pg"), a.getDouble("x").toFloat(), a.getDouble("y").toFloat())
             }
         }.orEmpty()
-        return FileNotes(pages, anchors, jumps)
+        val crops = HashMap<Int, List<Float>>()
+        o.optJSONObject("crops")?.let { co ->
+            co.keys().forEach { k ->
+                val a = co.getJSONArray(k)
+                crops[k.toInt()] = (0 until a.length()).map { a.getDouble(it).toFloat() }
+            }
+        }
+        return FileNotes(
+            pages, anchors, jumps, crops,
+            if (o.has("bpm")) o.getInt("bpm") else null,
+            if (o.has("beats")) o.getInt("beats") else null,
+        )
     }
 
     private fun toJson(path: String, n: FileNotes): JSONObject {
@@ -140,7 +160,13 @@ object AnnStore {
             }
             po.put(pg.toString(), arr)
         }
-        return JSONObject()
+        val co = JSONObject()
+        n.crops.forEach { (k, v) -> co.put(k.toString(), JSONArray(v.map { it.toDouble() })) }
+        val root = JSONObject()
+        if (n.bpm != null) root.put("bpm", n.bpm)
+        if (n.beats != null) root.put("beats", n.beats)
+        return root
+            .put("crops", co)
             .put("path", path)
             .put("pages", po)
             .put("anchors", JSONArray(n.anchors.map {

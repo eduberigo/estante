@@ -71,6 +71,16 @@ object SelfTest {
                     val back = AnnStore.load(ctx, f.absolutePath)
                     Log.i(tag, "anotacoes ok=${back == n} paginas=${back.pages.keys} ancoras=${back.anchors.size}")
                 }
+                pdfs.firstOrNull()?.let { f ->
+                    val o = File(ctx.cacheDir, "recortado.pdf")
+                    Export.cropFile(f, o) { android.graphics.RectF(0.1f, 0.05f, 0.9f, 0.5f) }
+                    val d = openDoc(o)!!
+                    val b = d.render(0, 800, 1200, false)
+                    Log.i(tag, "recorte gravado pdf: ${b?.width}x${b?.height} (esperado mais largo que alto)")
+                    d.close()
+                    val m = openDoc(f)!!.render(0, 800, 1200, false, false, android.graphics.RectF(0f, 0f, 1f, 0.5f))
+                    Log.i(tag, "recorte manual tela: ${m?.width}x${m?.height}")
+                }
                 val ab = AppBackup.create(ctx)
                 Log.i(tag, "backup app ${ab.name} bytes=${ab.length()} restaurados=${AppBackup.restore(ctx, ab)}")
                 val plan = LibraryBackup.plan(listOf(dir))

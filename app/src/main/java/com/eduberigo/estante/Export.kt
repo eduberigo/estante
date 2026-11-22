@@ -66,6 +66,51 @@ object Export {
     data class Result(val files: List<File>, val skipped: List<String>)
 
     /**
+     * Recorte gravado no arquivo. PDF: muda só a "caixa de corte" de cada página
+     * (as notas continuam vetoriais, sem perder qualidade). Imagem: corta os pixels.
+     * [rectFor] dá o retângulo (frações da página como aparece na tela) de cada página, ou null para não mexer.
+     */
+    suspend fun cropFile(src: File, out: File, rectFor: (Int) -> android.graphics.RectF?) = withContext(Dispatchers.IO) {
+        when (Fs.kindOf(src)) {
+            Kind.PDF -> {
+                PDDocument.load(src, MemoryUsageSetting.setupTempFileOnly()).use { doc ->
+                    if (doc.isEncrypted) doc.setAllSecurityToBeRemoved(true)
+                    for (i in 0 until doc.numberOfPages) {
+                        val r = rectFor(i) ?: continue
+                        val page = doc.getPage(i)
+                        val box = page.cropBox
+                        // Desfaz a rotação da página: (l,t,r,b) estão na orientação mostrada na tela.
+                        val (u0, u1, v0, v1) = when (((page.rotation % 360) + 360) % 360) {
+                            90 -> listOf(r.top, r.bottom, 1f - r.right, 1f - r.left)
+                            180 -> listOf(1f - r.right, 1f - r.left, 1f - r.bottom, 1f - r.top)
+                            270 -> listOf(1f - r.bottom, 1f - r.top, r.left, r.right)
+                            else -> listOf(r.left, r.right, r.top, r.bottom)
+                        }
+                        val llx = box.lowerLeftX + u0 * box.width
+                        val urx = box.lowerLeftX + u1 * box.width
+                        val ury = box.upperRightY - v0 * box.height
+                        val lly = box.upperRightY - v1 * box.height
+                        page.cropBox = PDRectangle(llx, lly, urx - llx, ury - lly)
+                    }
+                    doc.save(out)
+                }
+            }
+            Kind.IMAGE -> {
+                val r = rectFor(0) ?: throw IllegalArgumentException("sem recorte")
+                val big = decodeImage(src, 6000, 6000)
+                val x = (r.left * big.width).toInt().coerceIn(0, big.width - 1)
+                val y = (r.top * big.height).toInt().coerceIn(0, big.height - 1)
+                val w = (r.width() * big.width).toInt().coerceIn(1, big.width - x)
+                val h = (r.height() * big.height).toInt().coerceIn(1, big.height - y)
+                val c = Bitmap.createBitmap(big, x, y, w, h)
+                val fmt = if (out.extension.equals("png", true)) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG
+                out.outputStream().use { c.compress(fmt, 95, it) }
+            }
+            else -> throw IllegalArgumentException("tipo não suportado")
+        }
+    }
+
+    /**
      * Grava o modo legível no arquivo (página endireitada, fundo limpo, traço reforçado; recorte opcional).
      * PDF vira PDF de imagens; imagem vira JPG. A saída vai para [out].
      */
