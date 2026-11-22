@@ -71,6 +71,16 @@ object SelfTest {
                     val back = AnnStore.load(ctx, f.absolutePath)
                     Log.i(tag, "anotacoes ok=${back == n} paginas=${back.pages.keys} ancoras=${back.anchors.size}")
                 }
+                val ab = AppBackup.create(ctx)
+                Log.i(tag, "backup app ${ab.name} bytes=${ab.length()} restaurados=${AppBackup.restore(ctx, ab)}")
+                val plan = LibraryBackup.plan(listOf(dir))
+                Log.i(tag, "plano backup ${plan.files.size} arquivos ${plan.bytes} bytes")
+                LibraryBackup.start(ctx, listOf(dir.absolutePath), File(ctx.getExternalFilesDir(null), "bk").absolutePath)
+                var w = 0
+                while (w < 40 && (LibraryBackup.progress.value.running || LibraryBackup.progress.value.result == null)) {
+                    kotlinx.coroutines.delay(250); w++
+                }
+                Log.i(tag, "backup partituras: ${LibraryBackup.progress.value.result}")
                 Log.i(tag, "FIM OK")
             } catch (e: Throwable) {
                 Log.e(tag, "FALHOU", e)

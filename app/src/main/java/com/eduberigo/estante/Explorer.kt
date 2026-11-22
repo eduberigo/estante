@@ -362,6 +362,7 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
     var addToSetlistMany by remember { mutableStateOf<List<String>?>(null) }
     var confirmDelete by remember { mutableStateOf<List<String>?>(null) }
     var prepare by remember { mutableStateOf<List<String>?>(null) }
+    var backup by remember { mutableStateOf(false) }
     var newSetlist by remember { mutableStateOf(false) }
     var setItem by remember { mutableStateOf<Pair<Entry, Int>?>(null) }
 
@@ -646,6 +647,10 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                                     }
                                     HorizontalDivider()
                                     DropdownMenuItem(
+                                        text = { Text("Backup…") },
+                                        onClick = { menuOpen = false; backup = true },
+                                    )
+                                    DropdownMenuItem(
                                         text = { Text("Atualizar") },
                                         onClick = { menuOpen = false; state.reloadTick++ },
                                     )
@@ -824,6 +829,7 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
         addToSetlistMany?.let { ps ->
             AddToSetlistDialog(lib, ps) { addToSetlistMany = null; state.selection = emptySet() }
         }
+        if (backup) BackupDialog(state, volumes) { backup = false }
         prepare?.let { ps ->
             PrepareFilesDialog(ps, volumes, lib, state) { prepare = null; state.selection = emptySet() }
         }
