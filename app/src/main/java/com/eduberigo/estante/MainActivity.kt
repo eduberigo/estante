@@ -164,21 +164,38 @@ fun App(hasPermission: Boolean, requestPermission: () -> Unit) {
     val ctx = LocalContext.current
     val prefs = remember { Prefs(ctx) }
     val explorer = remember { ExplorerState(prefs) }
-    var reading by remember { mutableStateOf<File?>(null) }
+    val lib = remember { Library(ctx) }
+    var reading by remember { mutableStateOf<Reading?>(null) }
 
     val r = reading
     if (r != null) {
         BackHandler { reading = null }
-        ReaderScreen(
-            r,
-            autoCrop = explorer.autoCrop,
-            onAutoCrop = { explorer.updateAutoCrop(it) },
-            onClose = { reading = null },
-        )
+        androidx.compose.runtime.key(r.files[r.index].absolutePath, r.index) {
+            ReaderScreen(
+                file = r.files[r.index],
+                setlistName = r.title,
+                position = if (r.files.size > 1) r.index to r.files.size else null,
+                startAtEnd = r.startAtEnd,
+                onNextSong = if (r.index < r.files.lastIndex) ({ reading = r.copy(index = r.index + 1, startAtEnd = false) }) else null,
+                onPrevSong = if (r.index > 0) ({ atEnd: Boolean -> reading = r.copy(index = r.index - 1, startAtEnd = atEnd) }) else null,
+                onPlayed = { f, secs -> lib.recordPlay(f.absolutePath, secs) },
+                autoCrop = explorer.autoCrop,
+                onAutoCrop = { explorer.updateAutoCrop(it) },
+                onClose = { reading = null },
+            )
+        }
     } else {
-        ExplorerScreen(explorer, onOpen = { reading = it })
+        ExplorerScreen(explorer, lib, onOpen = { files, i, title -> reading = Reading(files, i, title) })
     }
 }
+
+/** O que está aberto no leitor: um arquivo só ou um setlist inteiro. */
+data class Reading(
+    val files: List<File>,
+    val index: Int,
+    val title: String?,
+    val startAtEnd: Boolean = false,
+)
 
 @Composable
 fun PermissionScreen(onRequest: () -> Unit) {

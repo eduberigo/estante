@@ -33,7 +33,20 @@ object SearchIndex {
         return Item(path, Fs.norm(rel))
     }
 
+    @Volatile private var freqSig: String? = null
+
     suspend fun ensure(ctx: Context, roots: List<File>, force: Boolean, onProgress: (Int) -> Unit) {
+        ensureIndex(ctx, roots, force, onProgress)
+        withContext(Dispatchers.Default) {
+            val s = sig
+            if (s != null && s != freqSig) {
+                Meta.buildFreq(items.asSequence().map { File(it.path).nameWithoutExtension })
+                freqSig = s
+            }
+        }
+    }
+
+    private suspend fun ensureIndex(ctx: Context, roots: List<File>, force: Boolean, onProgress: (Int) -> Unit) {
         withContext(Dispatchers.IO) {
             val s = signature(roots)
             if (!force && sig == s && items.isNotEmpty()) return@withContext

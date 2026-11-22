@@ -77,8 +77,31 @@ private val prevKeys = setOf(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun ReaderScreen(file: File, autoCrop: Boolean, onAutoCrop: (Boolean) -> Unit, onClose: () -> Unit) {
+fun ReaderScreen(
+    file: File,
+    setlistName: String?,
+    position: Pair<Int, Int>?,
+    startAtEnd: Boolean,
+    onNextSong: (() -> Unit)?,
+    onPrevSong: ((atEnd: Boolean) -> Unit)?,
+    onPlayed: (File, Int) -> Unit,
+    autoCrop: Boolean,
+    onAutoCrop: (Boolean) -> Unit,
+    onClose: () -> Unit,
+) {
     val activity = LocalContext.current as MainActivity
+    val nextSong by rememberUpdatedState(onNextSong)
+    val prevSong by rememberUpdatedState(onPrevSong)
+    val played by rememberUpdatedState(onPlayed)
+
+    // Conta como "tocada" se a partitura ficou aberta pelo menos 30 segundos.
+    DisposableEffect(file) {
+        val start = System.currentTimeMillis()
+        onDispose {
+            val secs = ((System.currentTimeMillis() - start) / 1000).toInt()
+            if (secs >= 30) played(file, secs)
+        }
+    }
     val doc = remember(file) { openDoc(file) }
     DisposableEffect(doc) { onDispose { doc?.close() } }
 
@@ -110,14 +133,21 @@ fun ReaderScreen(file: File, autoCrop: Boolean, onAutoCrop: (Boolean) -> Unit, o
     }
 
     val count = doc.pageCount.coerceAtLeast(1)
-    val pager = rememberPagerState(pageCount = { count })
+    val pager = rememberPagerState(initialPage = if (startAtEnd) count - 1 else 0, pageCount = { count })
     val scope = rememberCoroutineScope()
     var showBars by remember { mutableStateOf(false) }
 
     val turn: (Int) -> Unit = remember(pager, count) {
         { delta ->
-            val target = (pager.currentPage + delta).coerceIn(0, count - 1)
-            if (target != pager.currentPage) scope.launch { pager.scrollToPage(target) }
+            val raw = pager.currentPage + delta
+            when {
+                raw > count - 1 && nextSong != null -> nextSong?.invoke()
+                raw < 0 && prevSong != null -> prevSong?.invoke(true)
+                else -> {
+                    val target = raw.coerceIn(0, count - 1)
+                    if (target != pager.currentPage) scope.launch { pager.scrollToPage(target) }
+                }
+            }
         }
     }
 
@@ -157,7 +187,7 @@ fun ReaderScreen(file: File, autoCrop: Boolean, onAutoCrop: (Boolean) -> Unit, o
         if (!showBars) {
             // Relógio discreto, sempre visível.
             Text(
-                clock,
+                if (position != null) "${position.first + 1}/${position.second} • $clock" else clock,
                 color = Color.White,
                 style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier
@@ -183,13 +213,30 @@ fun ReaderScreen(file: File, autoCrop: Boolean, onAutoCrop: (Boolean) -> Unit, o
                 IconButton(onClick = onClose) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, "Fechar", tint = Color.White)
                 }
-                Text(
-                    file.nameWithoutExtension,
-                    color = Color.White,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        file.nameWithoutExtension,
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (position != null) {
+                        Text(
+                            "${setlistName ?: "Setlist"} • música ${position.first + 1} de ${position.second}",
+                            color = Color.LightGray,
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                        )
+                    }
+                }
+                if (position != null) {
+                    IconButton(enabled = onPrevSong != null, onClick = { onPrevSong?.invoke(false) }) {
+                        Text("⏮", color = if (onPrevSong != null) Color.White else Color.DarkGray, style = MaterialTheme.typography.titleLarge)
+                    }
+                    IconButton(enabled = onNextSong != null, onClick = { onNextSong?.invoke() }) {
+                        Text("⏭", color = if (onNextSong != null) Color.White else Color.DarkGray, style = MaterialTheme.typography.titleLarge)
+                    }
+                }
                 Text(clock, color = Color.White, modifier = Modifier.padding(horizontal = 8.dp))
                 Text(
                     "${pager.currentPage + 1} / $count",

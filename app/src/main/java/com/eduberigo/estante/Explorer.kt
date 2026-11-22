@@ -108,7 +108,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.abs
 
-private val FavColor = Color(0xFFFFB300)
+internal val FavColor = Color(0xFFFFB300)
 
 private val ThumbNames = listOf("Pequenas", "Médias", "Grandes", "Enormes")
 private val GridMin = listOf(90, 120, 170, 240)
@@ -156,6 +156,16 @@ class ExplorerState(private val prefs: Prefs) {
     var indexVersion by mutableIntStateOf(0)
     var reloadTick by mutableIntStateOf(0)
 
+    /** Setlist aberto (id de um manual, ou "auto:..."); null = pasta ou Início. */
+    var openSetlist by mutableStateOf<String?>(null)
+        private set
+
+    fun openSet(id: String) {
+        selected = null
+        openSetlist = id
+        atHome = false
+    }
+
     /** Arquivo a destacar depois de "Mostrar na pasta". */
     var pendingFocus by mutableStateOf<String?>(null)
 
@@ -183,11 +193,13 @@ class ExplorerState(private val prefs: Prefs) {
         selected = null
         dir = to
         atHome = false
+        openSetlist = null
     }
 
     fun goHome() {
         selected = null
         atHome = true
+        openSetlist = null
     }
 
     fun toggleGrid() {
@@ -263,13 +275,16 @@ class ExplorerState(private val prefs: Prefs) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ExplorerScreen(state: ExplorerState, onOpen: (File) -> Unit) {
+fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int, String?) -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val volumes = remember { Fs.volumes(ctx) }
     var menuOpen by remember { mutableStateOf(false) }
     var previewEntry by remember { mutableStateOf<Entry?>(null) }
     var actionsEntry by remember { mutableStateOf<Entry?>(null) }
+    var addToSetlist by remember { mutableStateOf<String?>(null) }
+    var newSetlist by remember { mutableStateOf(false) }
+    var setItem by remember { mutableStateOf<Pair<Entry, Int>?>(null) }
 
     // Carrega a pasta atual.
     LaunchedEffect(state.dir, state.reloadTick) {
@@ -295,6 +310,12 @@ fun ExplorerScreen(state: ExplorerState, onOpen: (File) -> Unit) {
 
     val roots = state.searchRoots()
     val rootsKey = roots.joinToString("|") { it.absolutePath }
+
+    // Índice em segundo plano: deixa a busca pronta e ajuda a estimar artistas.
+    LaunchedEffect(rootsKey) {
+        SearchIndex.ensure(ctx, roots, force = false) { }
+        state.indexVersion++
+    }
 
     // Monta (ou carrega) o índice da busca ao abrir a busca.
     LaunchedEffect(state.searching, rootsKey) {
@@ -322,6 +343,7 @@ fun ExplorerScreen(state: ExplorerState, onOpen: (File) -> Unit) {
         when {
             state.searching -> state.closeSearch()
             state.atHome -> Unit
+            state.openSetlist != null -> state.goHome()
             state.isPinned(state.dir.absolutePath) || atVolumeRoot -> state.goHome()
             else -> state.dir.parentFile?.let { state.navigate(it) } ?: state.goHome()
         }
@@ -335,7 +357,7 @@ fun ExplorerScreen(state: ExplorerState, onOpen: (File) -> Unit) {
         }
         when (e.kind) {
             Kind.DIR -> state.navigate(e.file)
-            Kind.PDF, Kind.IMAGE -> onOpen(e.file)
+            Kind.PDF, Kind.IMAGE -> onOpen(listOf(e.file), 0, null)
             Kind.OTHER -> Fs.openExternal(ctx, e.file)
         }
     }
@@ -352,7 +374,7 @@ fun ExplorerScreen(state: ExplorerState, onOpen: (File) -> Unit) {
         val bigScreen = maxWidth >= 600.dp
         val portrait = maxHeight >= maxWidth
         val previewOn = state.showPreviewPref ?: bigScreen
-        val showFolderAction = state.searching || state.atHome
+        val showFolderAction = state.searching || state.atHome || state.openSetlist != null
 
         fun click(e: Entry) {
             when {
@@ -379,6 +401,16 @@ fun ExplorerScreen(state: ExplorerState, onOpen: (File) -> Unit) {
                         when {
                             state.searching -> SearchField(state)
                             state.atHome -> Text("Início")
+                            state.openSetlist != null -> {
+                                val id = state.openSetlist!!
+                                Text(
+                                    lib.get(id)?.name
+                                        ?: lib.autoSetlists().firstOrNull { it.id == id }?.name
+                                        ?: "Setlist",
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                             else -> Text(
                                 Fs.volumeOf(state.dir, volumes)
                                     ?.takeIf { it.dir.absolutePath == state.dir.absolutePath }?.label
@@ -414,7 +446,7 @@ fun ExplorerScreen(state: ExplorerState, onOpen: (File) -> Unit) {
                             IconButton(onClick = { state.searching = true }) {
                                 Icon(Icons.Filled.Search, "Buscar")
                             }
-                            if (!state.atHome) {
+                            if (!state.atHome && state.openSetlist == null) {
                                 val here = state.dir.absolutePath
                                 IconButton(onClick = { state.toggleFav(here) }) {
                                     Icon(
@@ -434,7 +466,7 @@ fun ExplorerScreen(state: ExplorerState, onOpen: (File) -> Unit) {
                                 tint = if (previewOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        if (!state.searching && !state.atHome) {
+                        if (!state.searching && !state.atHome && state.openSetlist == null) {
                             IconButton(onClick = { state.toggleGrid() }) {
                                 if (state.grid) {
                                     Icon(Icons.AutoMirrored.Filled.List, "Ver em lista")
@@ -449,7 +481,7 @@ fun ExplorerScreen(state: ExplorerState, onOpen: (File) -> Unit) {
                                     Icon(Icons.Filled.MoreVert, "Mais")
                                 }
                                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                                    if (!state.atHome) {
+                                    if (!state.atHome && state.openSetlist == null) {
                                         val here = state.dir.absolutePath
                                         val pinnedHere = state.isPinned(here)
                                         DropdownMenuItem(
@@ -513,15 +545,45 @@ fun ExplorerScreen(state: ExplorerState, onOpen: (File) -> Unit) {
                     Column(Modifier.fillMaxSize()) {
                         when {
                             state.searching -> SearchInfo(state, roots)
-                            !state.atHome -> Breadcrumbs(state.dir, volumes) { state.navigate(it) }
+                            !state.atHome && state.openSetlist == null -> Breadcrumbs(state.dir, volumes) { state.navigate(it) }
                         }
-                        if (state.loading && !state.searching && !state.atHome) {
+                        if (state.loading && !state.searching && !state.atHome && state.openSetlist == null) {
                             LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
                         }
                         Box(Modifier.weight(1f).fillMaxWidth()) {
                             when {
                                 state.searching -> ResultsList(state, ::click, ::longClick)
-                                state.atHome -> HomeContent(state, pinnedEntries, favEntries, volumes, ::click, ::longClick)
+                                state.atHome -> HomeContent(
+                                    state, lib, pinnedEntries, favEntries, volumes, ::click, ::longClick,
+                                    onOpenSetlist = { state.openSet(it) },
+                                    onNewSetlist = { newSetlist = true },
+                                )
+                                state.openSetlist != null -> SetlistContent(
+                                    state = state,
+                                    lib = lib,
+                                    id = state.openSetlist!!,
+                                    onClickItem = { list, i ->
+                                        val e = list[i]
+                                        if (previewOn && state.selected?.path != e.path && e.file.exists()) {
+                                            state.selected = e
+                                        } else if (e.file.exists()) {
+                                            val name = lib.get(state.openSetlist!!)?.name ?: "Setlist"
+                                            onOpen(list.map { it.file }, i, name)
+                                        } else {
+                                            open(e)
+                                        }
+                                    },
+                                    onLongItem = { list, i ->
+                                        val id = state.openSetlist!!
+                                        if (lib.get(id) != null) setItem = list[i] to i else actionsEntry = list[i]
+                                    },
+                                    onPlay = { files, i ->
+                                        val id = state.openSetlist!!
+                                        val name = lib.get(id)?.name ?: lib.autoSetlists().firstOrNull { it.id == id }?.name
+                                        onOpen(files, i, name)
+                                    },
+                                    onDeleted = { state.goHome() },
+                                )
                                 else -> FolderContent(state, ::click, ::longClick)
                             }
                         }
@@ -537,6 +599,7 @@ fun ExplorerScreen(state: ExplorerState, onOpen: (File) -> Unit) {
                             crop = state.autoCrop,
                             favorite = sel != null && state.isFav(sel.path),
                             onToggleFav = { e -> state.toggleFav(e.path) },
+                            onAddToSetlist = { e -> addToSetlist = e.path },
                             onOpen = { open(it) },
                             onShowFolder = if (showFolderAction) ({ f: File -> showInFolder(f) }) else null,
                         )
@@ -567,6 +630,7 @@ fun ExplorerScreen(state: ExplorerState, onOpen: (File) -> Unit) {
                         crop = state.autoCrop,
                         favorite = state.isFav(e.path),
                         onToggleFav = { x -> state.toggleFav(x.path) },
+                        onAddToSetlist = { x -> previewEntry = null; addToSetlist = x.path },
                         onOpen = { previewEntry = null; open(it) },
                         onShowFolder = if (showFolderAction) ({ f: File -> previewEntry = null; showInFolder(f) }) else null,
                     )
@@ -574,10 +638,33 @@ fun ExplorerScreen(state: ExplorerState, onOpen: (File) -> Unit) {
             }
         }
 
+        addToSetlist?.let { p ->
+            AddToSetlistDialog(lib, p) { addToSetlist = null }
+        }
+        if (newSetlist) {
+            NameDialog("Novo setlist", "", onDismiss = { newSetlist = false }) { name ->
+                newSetlist = false
+                val s = lib.create(name)
+                state.openSet(s.id)
+            }
+        }
+        setItem?.let { (e, i) ->
+            SetlistItemDialog(
+                lib = lib,
+                setlistId = state.openSetlist ?: "",
+                index = i,
+                entry = e,
+                onShowFolder = { setItem = null; showInFolder(e.file) },
+                onAddOther = { setItem = null; addToSetlist = e.path },
+                onDismiss = { setItem = null },
+            )
+        }
+
         actionsEntry?.let { e ->
             ActionsDialog(
                 e = e,
                 state = state,
+                onAddToSetlist = if (e.kind != Kind.DIR) ({ actionsEntry = null; addToSetlist = e.path }) else null,
                 onDismiss = { actionsEntry = null },
                 onShowFolder = if (showFolderAction && e.kind != Kind.DIR) ({ actionsEntry = null; showInFolder(e.file) }) else null,
             )
@@ -650,7 +737,13 @@ private fun appVersion(ctx: android.content.Context): String = try {
 
 /** Menu ao segurar o dedo: Início, favoritos, ordem. */
 @Composable
-private fun ActionsDialog(e: Entry, state: ExplorerState, onDismiss: () -> Unit, onShowFolder: (() -> Unit)?) {
+private fun ActionsDialog(
+    e: Entry,
+    state: ExplorerState,
+    onAddToSetlist: (() -> Unit)?,
+    onDismiss: () -> Unit,
+    onShowFolder: (() -> Unit)?,
+) {
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = RoundedCornerShape(16.dp)) {
             Column(Modifier.padding(vertical = 8.dp).fillMaxWidth()) {
@@ -682,6 +775,7 @@ private fun ActionsDialog(e: Entry, state: ExplorerState, onDismiss: () -> Unit,
                     if (i > 0) ActionRow("Mover para antes") { state.movePin(e.path, -1); onDismiss() }
                     if (i < state.pinned.lastIndex) ActionRow("Mover para depois") { state.movePin(e.path, 1); onDismiss() }
                 }
+                if (onAddToSetlist != null) ActionRow("Adicionar a setlist…") { onAddToSetlist() }
                 if (onShowFolder != null) ActionRow("Mostrar na pasta") { onShowFolder() }
             }
         }
@@ -689,7 +783,7 @@ private fun ActionsDialog(e: Entry, state: ExplorerState, onDismiss: () -> Unit,
 }
 
 @Composable
-private fun ActionRow(label: String, onClick: () -> Unit) {
+internal fun ActionRow(label: String, onClick: () -> Unit) {
     Text(
         label,
         style = MaterialTheme.typography.bodyLarge,
@@ -788,13 +882,17 @@ private fun Breadcrumbs(dir: File, volumes: List<Volume>, onClick: (File) -> Uni
 @Composable
 private fun HomeContent(
     state: ExplorerState,
+    lib: Library,
     pinned: List<Entry>,
     favs: List<Entry>,
     volumes: List<Volume>,
     onClick: (Entry) -> Unit,
     onLong: (Entry) -> Unit,
+    onOpenSetlist: (String) -> Unit,
+    onNewSetlist: () -> Unit,
 ) {
     val gs = remember { LazyGridState(state.scrollMem["#home"] ?: 0) }
+    val autos = remember(lib.history) { lib.autoSetlists() }
     DisposableEffect(gs) { onDispose { state.scrollMem["#home"] = gs.firstVisibleItemIndex } }
     LazyVerticalGrid(
         columns = GridCells.Adaptive(GridMin[state.thumbSize].dp),
@@ -802,6 +900,52 @@ private fun HomeContent(
         contentPadding = PaddingValues(6.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
+        item(span = { GridItemSpan(maxLineSpan) }, key = "h-sets") { SectionHeader("Setlists") }
+        items(lib.setlists.size, key = { "s:" + lib.setlists[it].id }) { i ->
+            val sl = lib.setlists[i]
+            GridItem(
+                e = Entry(File(sl.id), Kind.OTHER, 0L, 0L),
+                label = sl.name,
+                selected = false,
+                fav = false,
+                subtitle = "${sl.items.size} ${if (sl.items.size == 1) "música" else "músicas"}",
+                dim = false,
+                onClick = { onOpenSetlist(sl.id) },
+                onLong = { onOpenSetlist(sl.id) },
+                icon = R.drawable.ic_setlist,
+            )
+        }
+        item(key = "s:new") {
+            GridItem(
+                e = Entry(File("novo"), Kind.OTHER, 0L, 0L),
+                label = "Novo setlist",
+                selected = false,
+                fav = false,
+                subtitle = null,
+                dim = false,
+                onClick = onNewSetlist,
+                onLong = onNewSetlist,
+                icon = R.drawable.ic_add,
+            )
+        }
+        if (autos.isNotEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }, key = "h-auto") { SectionHeader("Setlists automáticos (pelo que você toca)") }
+            items(autos.size, key = { "a:" + autos[it].id }) { i ->
+                val a = autos[i]
+                GridItem(
+                    e = Entry(File(a.id), Kind.OTHER, 0L, 0L),
+                    label = a.name,
+                    selected = false,
+                    fav = false,
+                    subtitle = if (a.id == "auto:top") "${a.items.size} músicas" else "artista • ${a.items.size}",
+                    dim = false,
+                    onClick = { onOpenSetlist(a.id) },
+                    onLong = { onOpenSetlist(a.id) },
+                    icon = R.drawable.ic_setlist,
+                )
+            }
+        }
+
         item(span = { GridItemSpan(maxLineSpan) }, key = "h-pastas") { SectionHeader("Pastas") }
         if (pinned.isEmpty()) {
             item(span = { GridItemSpan(maxLineSpan) }, key = "e-pastas") {
@@ -869,7 +1013,7 @@ private fun HomeContent(
 }
 
 @Composable
-private fun SectionHeader(text: String) {
+internal fun SectionHeader(text: String) {
     Text(
         text,
         style = MaterialTheme.typography.titleSmall,
@@ -879,7 +1023,7 @@ private fun SectionHeader(text: String) {
 }
 
 @Composable
-private fun HintText(text: String) {
+internal fun HintText(text: String) {
     Text(
         text,
         style = MaterialTheme.typography.bodySmall,
@@ -963,7 +1107,7 @@ private fun ResultsList(state: ExplorerState, onClick: (Entry) -> Unit, onLong: 
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun GridItem(
+internal fun GridItem(
     e: Entry,
     selected: Boolean,
     fav: Boolean,
@@ -1035,7 +1179,7 @@ private fun GridItem(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ListItemRow(
+internal fun ListItemRow(
     e: Entry,
     subtitle: String?,
     selected: Boolean,
@@ -1082,7 +1226,7 @@ private fun ListItemRow(
 
 /** Miniatura para PDF/imagem, ícone para pasta e outros arquivos. */
 @Composable
-private fun KindVisual(e: Entry, thumbW: Int, modifier: Modifier, iconSize: Int) {
+internal fun KindVisual(e: Entry, thumbW: Int, modifier: Modifier, iconSize: Int) {
     when (e.kind) {
         Kind.DIR -> Icon(
             painterResource(R.drawable.ic_folder), null,
@@ -1121,6 +1265,7 @@ fun PreviewPane(
     crop: Boolean,
     favorite: Boolean,
     onToggleFav: (Entry) -> Unit,
+    onAddToSetlist: (Entry) -> Unit,
     onOpen: (Entry) -> Unit,
     onShowFolder: ((File) -> Unit)?,
 ) {
@@ -1255,6 +1400,9 @@ fun PreviewPane(
                         OutlinedIconButton(onClick = { onToggleFav(entry) }, modifier = Modifier.size(48.dp)) {
                             Icon(Icons.Filled.Star, "Adicionar aos favoritos", tint = MaterialTheme.colorScheme.outline)
                         }
+                    }
+                    OutlinedIconButton(onClick = { onAddToSetlist(entry) }, modifier = Modifier.size(48.dp)) {
+                        Icon(painterResource(R.drawable.ic_playlist_add), "Adicionar a setlist")
                     }
                     if (onShowFolder != null) {
                         OutlinedButton(onClick = { onShowFolder(entry.file) }) { Text("Pasta") }
