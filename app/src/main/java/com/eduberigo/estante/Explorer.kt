@@ -125,6 +125,9 @@ private val GridPx = listOf(240, 320, 460, 640, 880, 1200)
 private val ListW = listOf(36, 44, 64, 96, 128, 170)
 private val ListPx = listOf(100, 130, 200, 300, 400, 520)
 
+internal fun gridMinDp(size: Int) = GridMin[size.coerceIn(0, GridMin.lastIndex)].dp
+internal fun gridPx(size: Int) = GridPx[size.coerceIn(0, GridPx.lastIndex)]
+
 /** Estado do explorador. Fica vivo enquanto o leitor está aberto, para voltar ao mesmo ponto. */
 class ExplorerState(private val prefs: Prefs) {
     /** true = tela Início (pastas escolhidas + favoritos); false = dentro de uma pasta. */
@@ -383,6 +386,7 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
     var confirmDelete by remember { mutableStateOf<List<String>?>(null) }
     var prepare by remember { mutableStateOf<List<String>?>(null) }
     var backup by remember { mutableStateOf(false) }
+    var renaming by remember { mutableStateOf<Entry?>(null) }
     var newSetlist by remember { mutableStateOf(false) }
     var setItem by remember { mutableStateOf<Pair<Entry, Int>?>(null) }
 
@@ -502,12 +506,8 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
         }
 
         fun longClick(e: Entry) {
-            if (e.kind != Kind.DIR && e.file.exists() && !previewOn) {
-                previewEntry = e
-            } else {
-                if (e.kind != Kind.DIR) state.selected = e
-                actionsEntry = e
-            }
+            if (e.kind != Kind.DIR && previewOn) state.selected = e
+            actionsEntry = e
         }
 
         Scaffold(
@@ -605,7 +605,7 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                                 tint = if (previewOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        if (!state.searching && state.inFolder) {
+                        if (state.searching || !state.atHome) {
                             IconButton(onClick = { state.toggleGrid() }) {
                                 when (state.viewMode) {
                                     0 -> Icon(Icons.AutoMirrored.Filled.List, "Ver em lista")
@@ -860,6 +860,34 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
             AddToSetlistDialog(lib, ps) { addToSetlistMany = null; state.selection = emptySet() }
         }
         if (backup) BackupDialog(state, volumes) { backup = false }
+        renaming?.let { e ->
+            val f = e.file
+            val ext = if (f.isFile && f.extension.isNotEmpty()) "." + f.extension else ""
+            NameDialog(
+                "Renomear" + if (ext.isNotEmpty()) " (a extensão $ext é mantida)" else "",
+                if (f.isFile) f.nameWithoutExtension else f.name,
+                onDismiss = { renaming = null },
+            ) { newName ->
+                renaming = null
+                val clean = newName.trim().replace(Regex("[\\\\/:*?\"<>|]"), "-")
+                val dst = File(f.parentFile, clean + ext)
+                when {
+                    clean.isEmpty() || dst.absolutePath == f.absolutePath -> Unit
+                    dst.exists() -> Toast.makeText(ctx, "Já existe \"${dst.name}\" nesta pasta", Toast.LENGTH_LONG).show()
+                    f.renameTo(dst) -> {
+                        val moved = mapOf(f.absolutePath to dst.absolutePath)
+                        lib.relink(moved)
+                        AnnStore.relink(ctx, moved)
+                        state.relink(moved)
+                        if (state.selected?.path == f.absolutePath) state.selected = Fs.entry(dst)
+                        state.reloadTick++
+                        if (state.searching) state.results = state.results.map { if (it.path == f.absolutePath) Fs.entry(dst) else it }
+                        scope.launch { SearchIndex.ensure(ctx, roots, force = true) { }; state.indexVersion++ }
+                    }
+                    else -> Toast.makeText(ctx, "Não foi possível renomear", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
         prepare?.let { ps ->
             PrepareFilesDialog(
                 ps, volumes, lib, state.autoCrop,
@@ -918,6 +946,21 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                 e = e,
                 state = state,
                 onSelect = if (!state.atHome || state.searching) ({ actionsEntry = null; state.selection = setOf(e.path) }) else null,
+                onPreview = if (!previewOn && e.kind != Kind.DIR && e.file.exists()) ({ actionsEntry = null; previewEntry = e }) else null,
+                onCopy = if (e.file.exists()) ({
+                    actionsEntry = null
+                    state.clip = ExplorerState.Clip(listOf(e.path), move = false)
+                    if (state.searching) state.closeSearch()
+                    if (!state.inFolder) e.file.parentFile?.let { state.navigate(it) }
+                }) else null,
+                onMove = if (e.file.exists()) ({
+                    actionsEntry = null
+                    state.clip = ExplorerState.Clip(listOf(e.path), move = true)
+                    if (state.searching) state.closeSearch()
+                    if (!state.inFolder) e.file.parentFile?.let { state.navigate(it) }
+                }) else null,
+                onRename = if (e.file.exists()) ({ actionsEntry = null; renaming = e }) else null,
+                onDelete = if (e.file.exists()) ({ actionsEntry = null; confirmDelete = listOf(e.path) }) else null,
                 onAddToSetlist = if (e.kind != Kind.DIR) ({ actionsEntry = null; addToSetlist = e.path }) else null,
                 onPrepare = if (e.kind == Kind.PDF || e.kind == Kind.IMAGE) ({ actionsEntry = null; prepare = listOf(e.path) }) else null,
                 onDismiss = { actionsEntry = null },
@@ -996,6 +1039,11 @@ private fun ActionsDialog(
     e: Entry,
     state: ExplorerState,
     onSelect: (() -> Unit)?,
+    onPreview: (() -> Unit)?,
+    onCopy: (() -> Unit)?,
+    onMove: (() -> Unit)?,
+    onRename: (() -> Unit)?,
+    onDelete: (() -> Unit)?,
     onAddToSetlist: (() -> Unit)?,
     onPrepare: (() -> Unit)?,
     onDismiss: () -> Unit,
@@ -1018,7 +1066,20 @@ private fun ActionsDialog(
                     modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 8.dp),
                 )
                 HorizontalDivider()
-                if (onSelect != null) ActionRow("Selecionar vários (mover, copiar, apagar…)") { onSelect() }
+                if (onPreview != null) ActionRow("Pré-visualizar") { onPreview() }
+                if (onMove != null) ActionRow("Mover para…") { onMove() }
+                if (onCopy != null) ActionRow("Copiar para…") { onCopy() }
+                if (onRename != null) ActionRow("Renomear…") { onRename() }
+                if (onDelete != null) {
+                    Text(
+                        "Excluir",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.fillMaxWidth().clickable { onDelete() }.padding(horizontal = 20.dp, vertical = 14.dp),
+                    )
+                }
+                HorizontalDivider()
+                if (onSelect != null) ActionRow("Selecionar vários…") { onSelect() }
                 val pinned = state.isPinned(e.path)
                 if (e.kind == Kind.DIR) {
                     ActionRow(if (pinned) "Remover do Início" else "Adicionar ao Início") {
@@ -2036,7 +2097,12 @@ internal fun EntryRows(
             }
         }
         LazyVerticalGrid(
-            columns = if (state.viewMode == 2) GridCells.Adaptive(ColumnWidth) else GridCells.Fixed(1),
+            columns = when (state.viewMode) {
+                0 -> GridCells.Adaptive(GridMin[state.thumbSize].dp)
+                2 -> GridCells.Adaptive(ColumnWidth)
+                else -> GridCells.Fixed(1)
+            },
+            contentPadding = PaddingValues(if (state.viewMode == 0) 6.dp else 0.dp),
             modifier = Modifier.fillMaxSize(),
         ) {
             groups.forEach { (label, items) ->
@@ -2047,12 +2113,26 @@ internal fun EntryRows(
                 }
                 items(items.size, key = { (label ?: "") + "|" + items[it].path }) { i ->
                     val e = items[i]
-                    ListItemRow(
-                        e, sub(e), state.isSel(e.path), state.isFav(e.path),
-                        { onClick(e) }, { onLong(e) }, state.thumbSize,
-                        title = title(e),
-                        highlight = highlight,
-                    )
+                    if (state.viewMode == 0) {
+                        GridItem(
+                            e = e,
+                            selected = state.isSel(e.path),
+                            fav = state.isFav(e.path),
+                            subtitle = sub(e),
+                            dim = false,
+                            onClick = { onClick(e) },
+                            onLong = { onLong(e) },
+                            label = title(e),
+                            thumbPx = GridPx[state.thumbSize],
+                        )
+                    } else {
+                        ListItemRow(
+                            e, sub(e), state.isSel(e.path), state.isFav(e.path),
+                            { onClick(e) }, { onLong(e) }, state.thumbSize,
+                            title = title(e),
+                            highlight = highlight,
+                        )
+                    }
                 }
             }
         }

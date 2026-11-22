@@ -275,15 +275,22 @@ object Meta {
     /** Conta quantas vezes cada trecho aparece nos nomes da biblioteca (inteiro e separado em participações). */
     fun buildFreq(names: Sequence<String>) {
         val m = HashMap<String, Int>()
+        val solo = HashMap<String, Int>()
         for (nm in names) {
             val (ps, _) = parts(nm)
             for (p in ps.take(2)) {
-                val pieces = (listOf(p) + featSplit(p) + listSplit(p)).map { key(it) }.filter { it.isNotEmpty() }.toSet()
+                val feat = (listOf(p) + featSplit(p)).map { key(it) }.filter { it.isNotEmpty() }.toSet()
+                for (k in feat) solo[k] = (solo[k] ?: 0) + 1
+                val pieces = feat + featSplit(p).flatMap { listSplit(it) }.map { key(it) }.filter { it.isNotEmpty() }
                 for (k in pieces) m[k] = (m[k] ?: 0) + 1
             }
         }
         partFreq = m
+        soloFreq = solo
     }
+
+    /** Quantas vezes um nome aparece sozinho (sem ser pedaço de "A & B"). */
+    @Volatile var soloFreq: Map<String, Int> = emptyMap()
 
     /** Chave de comparação: sem acento, minúsculas, espaços simples. */
     fun key(s: String): String = Fs.norm(s).replace(Regex("[\\s.]+"), " ").trim()
@@ -303,8 +310,8 @@ object Meta {
 
     private fun artistScore(p: String): Int {
         val whole = partFreq[key(p)] ?: 0
-        val main = featSplit(p).firstOrNull()?.let { partFreq[key(it)] } ?: 0
-        return maxOf(whole, main)
+        val pieces = featSplit(p).flatMap { listOf(it) + listSplit(it) }.maxOfOrNull { partFreq[key(it)] ?: 0 } ?: 0
+        return maxOf(whole, pieces)
     }
 
     /**
@@ -316,7 +323,7 @@ object Meta {
         val out = mutableListOf<String>()
         for (piece in featSplit(a)) {
             val sub = listSplit(piece)
-            if (sub.size > 1 && sub.all { (partFreq[key(it)] ?: 0) >= 1 && key(it) != key(piece) }) {
+            if (sub.size > 1 && sub.all { (soloFreq[key(it)] ?: 0) >= 1 }) {
                 out.addAll(sub)
             } else {
                 out.add(piece)

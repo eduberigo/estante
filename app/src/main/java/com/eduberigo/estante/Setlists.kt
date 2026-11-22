@@ -118,6 +118,40 @@ fun SetlistContent(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+        } else if (!ordering && state.viewMode != 1) {
+            // Miniaturas ou lista lado a lado (o modo "Ordenar" usa sempre a lista simples).
+            androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+                columns = if (state.viewMode == 0) {
+                    androidx.compose.foundation.lazy.grid.GridCells.Adaptive(gridMinDp(state.thumbSize))
+                } else {
+                    androidx.compose.foundation.lazy.grid.GridCells.Adaptive(ColumnWidth)
+                },
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                items(entries.size, key = { "$it:${entries[it].path}" }) { i ->
+                    val e = entries[i]
+                    val label = labels.getOrNull(i) ?: e.title
+                    if (state.viewMode == 0) {
+                        GridItem(
+                            e = e,
+                            selected = state.isSel(e.path),
+                            fav = state.isFav(e.path),
+                            subtitle = "${i + 1}.",
+                            dim = !e.file.exists(),
+                            onClick = { onClickItem(entries, i) },
+                            onLong = { onLongItem(entries, i) },
+                            label = label,
+                            thumbPx = gridPx(state.thumbSize),
+                        )
+                    } else {
+                        ListItemRow(
+                            e, "${i + 1}. ${state.shortFolder(e.file)}", state.isSel(e.path), state.isFav(e.path),
+                            { onClickItem(entries, i) }, { onLongItem(entries, i) }, state.thumbSize,
+                            title = label,
+                        )
+                    }
+                }
+            }
         } else {
             LazyColumn(Modifier.fillMaxSize()) {
                 items(entries.size, key = { "$it:${entries[it].path}" }) { i ->

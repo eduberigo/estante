@@ -102,6 +102,7 @@ object SelfTest {
                 }
                 run {
                     val saved = Meta.partFreq
+                    val savedSolo = Meta.soloFreq
                     val names = listOf(
                         "Your Song - Elton John - X - pop - C - 64", "elton john - rocket man",
                         "ELTON JOHN - Tiny Dancer", "Kiki Dee - I Got the Music in Me",
@@ -114,6 +115,7 @@ object SelfTest {
                         Log.i(tag, "artista '$n' -> ${i.artist} -> ${i.artist?.let { Meta.artistsOf(it) }} chave=${i.artist?.let { a -> Meta.artistsOf(a).map { Meta.key(it) } }}")
                     }
                     Meta.partFreq = saved
+                    Meta.soloFreq = savedSolo
                 }
                 Log.i(tag, "FIM OK")
             } catch (e: Throwable) {
