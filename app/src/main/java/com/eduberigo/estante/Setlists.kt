@@ -64,6 +64,7 @@ fun SetlistContent(
     var renaming by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
     var exporting by remember { mutableStateOf(false) }
+    var ordering by remember { mutableStateOf(false) }
 
     val entries by produceState(emptyList<Entry>(), paths) {
         value = withContext(Dispatchers.IO) {
@@ -85,6 +86,9 @@ fun SetlistContent(
                 onClick = { onPlay(paths.map { File(it) }, 0) },
             ) { Text("▶ Tocar") }
             if (manual != null) {
+                OutlinedButton(enabled = paths.size > 1, onClick = { ordering = !ordering }) {
+                    Text(if (ordering) "Concluir ordem" else "Ordenar")
+                }
                 OutlinedButton(enabled = paths.isNotEmpty(), onClick = { exporting = true }) { Text("Exportar") }
                 OutlinedButton(onClick = { renaming = true }) { Text("Renomear") }
                 OutlinedButton(onClick = { deleting = true }) { Text("Excluir") }
@@ -121,11 +125,26 @@ fun SetlistContent(
                     val plays = lib.playCount(e.path)
                     val sub = "${i + 1}. ${state.shortFolder(e.file)}" +
                         if (plays > 0) " • tocada ${plays}x" else ""
-                    ListItemRow(
-                        e, sub, state.selected?.path == e.path, state.isFav(e.path),
-                        { onClickItem(entries, i) }, { onLongItem(entries, i) }, state.thumbSize,
-                        title = labels.getOrNull(i) ?: e.title,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.weight(1f)) {
+                            ListItemRow(
+                                e, sub, state.isSel(e.path), state.isFav(e.path),
+                                { onClickItem(entries, i) }, { onLongItem(entries, i) }, state.thumbSize,
+                                title = labels.getOrNull(i) ?: e.title,
+                            )
+                        }
+                        if (ordering && manual != null) {
+                            androidx.compose.material3.FilledTonalIconButton(
+                                enabled = i > 0,
+                                onClick = { lib.move(manual.id, i, -1) },
+                            ) { Text("▲") }
+                            androidx.compose.material3.FilledTonalIconButton(
+                                enabled = i < paths.lastIndex,
+                                onClick = { lib.move(manual.id, i, 1) },
+                                modifier = Modifier.padding(end = 8.dp),
+                            ) { Text("▼") }
+                        }
+                    }
                 }
             }
         }
