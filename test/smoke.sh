@@ -64,6 +64,9 @@ adb shell input tap $((W/2)) $((H*2/3)); sleep 1
 dump; python3 test/tap.py "Âncora" >> out/anot.txt; sleep 1
 adb shell input tap $((W/2)) $((H/4)); sleep 2
 dump; python3 test/tap.py "Coda" >> out/anot.txt; sleep 2
+dump; python3 test/tap.py "Borracha" >> out/anot.txt; sleep 1
+adb shell input swipe $((W/3)) $((H/3)) $((W*2/3)) $((H/2)) 800; sleep 1
+adb shell input tap $((W/2)) $((H*2/3)); sleep 1
 dump; python3 test/tap.py "Concluir" >> out/anot.txt; sleep 2
 dump; cp out/ui-tmp.xml out/ui-depois.xml
 adb shell input tap $((W/2)) $((H/2)); sleep 2; dump; python3 test/tap.py "Metrônomo" >> out/anot.txt; sleep 2
