@@ -4,6 +4,7 @@ set -x
 PKG=com.eduberigo.estante
 mkdir -p out
 adb logcat -c
+adb shell settings put secure immersive_mode_confirmations confirmed
 adb install -r app/build/outputs/apk/release/app-release.apk > out/install.txt 2>&1
 adb shell pm list packages | grep estante >> out/install.txt
 adb shell cmd package resolve-activity --brief $PKG >> out/install.txt 2>&1
