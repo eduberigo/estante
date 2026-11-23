@@ -65,6 +65,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        AppEvents.resumed.value = AppEvents.resumed.value + 1
         hasPermission.value = Environment.isExternalStorageManager()
     }
 
@@ -197,7 +198,7 @@ fun App(hasPermission: Boolean, requestPermission: () -> Unit) {
     val ctx = LocalContext.current
     val prefs = remember { Prefs(ctx) }
     val explorer = remember { ExplorerState(prefs) }
-    val lib = remember { Library(ctx) }
+    val lib = remember { Library(ctx).also { Ratings.init(ctx) } }
     val activity = LocalContext.current as MainActivity
     var reading by remember {
         // Usado pelo teste automático: abrir direto um arquivo no leitor.
@@ -279,4 +280,9 @@ fun PermissionScreen(onRequest: () -> Unit) {
         Spacer(Modifier.height(24.dp))
         Button(onClick = onRequest) { Text("Dar permissão") }
     }
+}
+
+/** Eventos do app observados pelas telas (ex.: voltou ao app → atualizar o índice). */
+object AppEvents {
+    val resumed = kotlinx.coroutines.flow.MutableStateFlow(0)
 }

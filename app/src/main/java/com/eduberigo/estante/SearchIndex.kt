@@ -66,7 +66,7 @@ object SearchIndex {
                     .onEnter { it == root || !it.name.startsWith(".") }
                     .forEach { f ->
                         ensureActive()
-                        if (f.isFile && !f.name.startsWith(".") && seen.add(f.absolutePath)) {
+                        if (f.isFile && !f.name.startsWith(".") && Fs.kindOf(f, false) != Kind.OTHER && seen.add(f.absolutePath)) {
                             out.add(make(roots, f.absolutePath))
                             if (out.size % 250 == 0) onProgress(out.size)
                         }
@@ -121,11 +121,23 @@ object SearchIndex {
     fun search(query: String, limit: Int = 400): List<Entry> {
         val tokens = Fs.norm(query).split(' ', '\t').filter { it.isNotBlank() }
         if (tokens.isEmpty()) return emptyList()
-        return items.asSequence()
+        val missing = HashSet<String>()
+        val out = items.asSequence()
             .filter { item -> tokens.all { item.key.contains(it) } }
+            // Arquivo apagado ou movido fora do app: some da busca (e do índice).
+            .filter { item -> File(item.path).exists().also { ok -> if (!ok) missing.add(item.path) } }
             .take(limit)
             .map { Fs.entry(File(it.path)) }
             .sortedWith(Comparator { a, b -> NaturalOrder.compare(a.name, b.name) })
             .toList()
+        if (missing.isNotEmpty()) forget(missing)
+        return out
+    }
+
+    /** Tira caminhos do índice na hora (depois de apagar/mover pelo app ou ao achar arquivo sumido). */
+    fun forget(paths: Collection<String>) {
+        if (paths.isEmpty()) return
+        val set = paths.toHashSet()
+        items = items.filter { it.path !in set && set.none { p -> it.path.startsWith("$p/") } }
     }
 }

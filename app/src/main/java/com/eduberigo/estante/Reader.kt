@@ -441,6 +441,9 @@ fun ReaderScreen(
                         )
                     }
                     if (imageFiles != null) BarButton("Salvar PDF", true) { savePdf = true }
+                    val curPath = imageFiles?.getOrNull(pager.currentPage)?.absolutePath ?: file.absolutePath
+                    Spacer(Modifier.width(8.dp))
+                    StarsRow(Ratings.of(curPath), { n -> Ratings.set(listOf(curPath), n) }, size = 28)
                 }
             }
             if (count > 1) {

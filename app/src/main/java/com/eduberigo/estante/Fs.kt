@@ -52,6 +52,8 @@ object Fs {
         return files.asSequence()
             .filter { !it.name.startsWith(".") }
             .map { entry(it) }
+            // Só pastas, PDFs e imagens.
+            .filter { it.kind != Kind.OTHER }
             .sortedWith(entryOrder)
             .toList()
     }

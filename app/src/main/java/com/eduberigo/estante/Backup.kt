@@ -36,6 +36,7 @@ object AppBackup {
         val out = mutableListOf<Pair<String, File>>()
         File(ctx.filesDir, "setlists.json").takeIf { it.exists() }?.let { out.add("setlists.json" to it) }
         File(ctx.filesDir, "historico.tsv").takeIf { it.exists() }?.let { out.add("historico.tsv" to it) }
+        File(ctx.filesDir, "classificacao.json").takeIf { it.exists() }?.let { out.add("classificacao.json" to it) }
         AnnStore.allFiles(ctx).forEach { out.add("anotacoes/${it.name}" to it) }
         File(ctx.dataDir, "shared_prefs/estante.xml").takeIf { it.exists() }?.let { out.add("prefs/estante.xml" to it) }
         return out
@@ -78,7 +79,7 @@ object AppBackup {
                 if (e.isDirectory || !e.name.startsWith(prefix)) continue
                 val rel = e.name.removePrefix(prefix)
                 val dst = when {
-                    rel == "setlists.json" || rel == "historico.tsv" -> File(ctx.filesDir, rel)
+                    rel == "setlists.json" || rel == "historico.tsv" || rel == "classificacao.json" -> File(ctx.filesDir, rel)
                     rel.startsWith("anotacoes/") && !rel.contains("..") -> File(annDir, rel.removePrefix("anotacoes/"))
                     rel == "prefs/estante.xml" -> File(ctx.dataDir, "shared_prefs/estante.xml")
                     else -> null

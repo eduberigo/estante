@@ -146,6 +146,7 @@ class Library(ctx: Context) {
         }
         setlists = setlists.map { sl -> sl.copy(items = sl.items.map { it.copy(path = map(it.path)) }) }
         saveSetlists()
+        Ratings.relink(moved)
     }
 
     // ---------- histórico ----------
@@ -330,5 +331,61 @@ object Meta {
             }
         }
         return out.ifEmpty { listOf(a) }
+    }
+}
+
+/**
+ * Classificação com estrelas (1 a 5) por arquivo. Fica num JSON do app (o arquivo não muda).
+ * Lida em tempo real pela tela (estado observável).
+ */
+object Ratings {
+    private var file: File? = null
+    var map by mutableStateOf<Map<String, Int>>(emptyMap())
+        private set
+
+    fun init(ctx: Context) {
+        if (file != null) return
+        val f = File(ctx.filesDir, "classificacao.json")
+        file = f
+        map = try {
+            if (!f.exists()) emptyMap() else JSONObject(f.readText()).let { o ->
+                o.keys().asSequence().associateWith { o.getInt(it) }
+            }
+        } catch (e: Exception) {
+            emptyMap()
+        }
+    }
+
+    fun of(path: String): Int = map[path] ?: 0
+
+    /** n = 0 remove a classificação. */
+    fun set(paths: Collection<String>, n: Int) {
+        val m = map.toMutableMap()
+        paths.forEach { if (n in 1..5) m[it] = n else m.remove(it) }
+        map = m
+        save()
+    }
+
+    fun relink(moved: Map<String, String>) {
+        if (moved.isEmpty()) return
+        fun mapP(p: String): String {
+            moved[p]?.let { return it }
+            for ((a, b) in moved) if (p.startsWith("$a/")) return b + p.removePrefix(a)
+            return p
+        }
+        map = map.entries.associate { mapP(it.key) to it.value }
+        save()
+    }
+
+    fun count(n: Int) = map.values.count { it == n }
+
+    private fun save() {
+        val f = file ?: return
+        try {
+            val o = JSONObject()
+            map.forEach { (k, v) -> o.put(k, v) }
+            f.writeText(o.toString())
+        } catch (_: Exception) {
+        }
     }
 }
