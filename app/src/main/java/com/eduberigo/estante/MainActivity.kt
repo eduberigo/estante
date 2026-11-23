@@ -120,6 +120,11 @@ class Prefs(ctx: Context) {
         set(v) { sp.edit().putInt("viewMode", v).apply() }
 
     /** Separar resultados em "memória interna" e "cartão". */
+    /** Agrupar resultados pela pasta onde o arquivo está. */
+    var groupByFolder: Boolean
+        get() = sp.getBoolean("groupByFolder", false)
+        set(v) { sp.edit().putBoolean("groupByFolder", v).apply() }
+
     var groupByVolume: Boolean
         get() = sp.getBoolean("groupByVolume", false)
         set(v) { sp.edit().putBoolean("groupByVolume", v).apply() }

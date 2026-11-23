@@ -142,6 +142,14 @@ class ExplorerState(private val prefs: Prefs) {
         private set
     val grid: Boolean get() = viewMode == 0
 
+    var groupByFolder by mutableStateOf(prefs.groupByFolder)
+        private set
+
+    fun toggleGroupByFolder() {
+        groupByFolder = !groupByFolder
+        prefs.groupByFolder = groupByFolder
+    }
+
     var groupByVolume by mutableStateOf(prefs.groupByVolume)
         private set
 
@@ -2074,21 +2082,40 @@ internal fun EntryRows(
 ) {
     val ctx = LocalContext.current
     val vols = remember { Fs.volumes(ctx) }
-    val groups: List<Pair<String?, List<Entry>>> = remember(list, state.groupByVolume) {
-        if (!state.groupByVolume) {
+    val groups: List<Pair<String?, List<Entry>>> = remember(list, state.groupByVolume, state.groupByFolder) {
+        val byVol: List<Pair<String?, List<Entry>>> = if (!state.groupByVolume) {
             listOf(null to list)
         } else {
-            val byVol = list.groupBy { Fs.volumeOf(it.file, vols) }
-            vols.mapNotNull { v -> byVol[v]?.let { v.label to it } } +
-                listOfNotNull(byVol[null]?.let { "Outros locais" to it })
+            val m = list.groupBy { Fs.volumeOf(it.file, vols) }
+            vols.mapNotNull { v -> m[v]?.let { v.label to it } } +
+                listOfNotNull(m[null]?.let { "Outros locais" to it })
+        }
+        if (!state.groupByFolder) {
+            byVol
+        } else {
+            // Dentro de cada local, um grupo por pasta (ex.: "Partituras › Casamentos").
+            byVol.flatMap { (vol, items) ->
+                items.groupBy { it.file.parent.orEmpty() }
+                    .map { (_, inFolder) ->
+                        val folder = state.shortFolder(inFolder.first().file)
+                        (if (vol != null) "$vol • $folder" else folder) to inFolder
+                    }
+                    .sortedWith(Comparator { a, b -> NaturalOrder.compare(a.first, b.first) })
+            }
         }
     }
     Column(Modifier.fillMaxSize()) {
-        if (vols.size > 1 || state.groupByVolume) {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp).horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            androidx.compose.material3.FilterChip(
+                selected = state.groupByFolder,
+                onClick = { state.toggleGroupByFolder() },
+                label = { Text("Agrupar por pasta") },
+            )
+            if (vols.size > 1 || state.groupByVolume) {
                 androidx.compose.material3.FilterChip(
                     selected = state.groupByVolume,
                     onClick = { state.toggleGroupByVolume() },
