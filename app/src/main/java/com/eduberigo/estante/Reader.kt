@@ -218,6 +218,7 @@ fun ReaderScreen(
     var penColor by remember { mutableIntStateOf(PenColors[1]) }
     var hlColor by remember { mutableIntStateOf(HlColors[0]) }
     var finger by remember { mutableIntStateOf(1) }
+    var textSize by remember { mutableIntStateOf(1) }
     var pendingText by remember { mutableStateOf<Triple<Int, Offset, String?>?>(null) }
     var pendingAnchor by remember { mutableStateOf<Pair<Int, Offset>?>(null) }
     var pendingJump by remember { mutableStateOf<Pair<Int, Offset>?>(null) }
@@ -300,23 +301,21 @@ fun ReaderScreen(
                     when (tool) {
                         Tool.TEXT -> pendingText = Triple(index, pt, null)
                         Tool.FINGER -> update(path) {
-                            it.add(pg, Ann("finger", penColor, 0.03f, listOf(pt.x, pt.y), finger.toString()))
+                            it.add(pg, Ann("finger", penColor, FingerSizes[textSize], listOf(pt.x, pt.y), finger.toString()))
                         }
                         Tool.ANCHOR -> pendingAnchor = index to pt
                         Tool.JUMP -> pendingJump = index to pt
                         Tool.ERASER -> {
+                            // Apaga tudo o que estiver sob o dedo: traços, marca-texto, círculos, textos, dedilhados, âncoras, saltos.
                             val cur = notes[path] ?: FileNotes()
+                            val radius = 28f
                             val list = cur.pages[pg].orEmpty()
-                            val near = list.withIndex().minByOrNull { AnnDraw.distance(map, it.value, view) }
+                            val keep = list.filter { AnnDraw.distance(map, it, view) > radius }
                             val tagNear = { x: Float, y: Float -> map.toView(x, y).let { hypot(it.x - view.x, it.y - view.y) } }
-                            val anc = cur.anchors.filter { it.page == pg }.minByOrNull { tagNear(it.x, it.y) }
-                            val jmp = cur.jumps.filter { it.page == pg }.minByOrNull { tagNear(it.x, it.y) }
-                            when {
-                                anc != null && tagNear(anc.x, anc.y) < 50f -> update(path) { it.copy(anchors = it.anchors - anc) }
-                                jmp != null && tagNear(jmp.x, jmp.y) < 50f -> update(path) { it.copy(jumps = it.jumps - jmp) }
-                                near != null && AnnDraw.distance(map, near.value, view) < 40f -> update(path) {
-                                    it.copy(pages = it.pages + (pg to list.filterIndexed { k, _ -> k != near.index }))
-                                }
+                            val ancKeep = cur.anchors.filter { it.page != pg || tagNear(it.x, it.y) > 55f }
+                            val jmpKeep = cur.jumps.filter { it.page != pg || tagNear(it.x, it.y) > 55f }
+                            if (keep.size != list.size || ancKeep.size != cur.anchors.size || jmpKeep.size != cur.jumps.size) {
+                                update(path) { it.copy(pages = it.pages + (pg to keep), anchors = ancKeep, jumps = jmpKeep) }
                             }
                         }
                         else -> Unit
@@ -475,6 +474,8 @@ fun ReaderScreen(
                 onHlColor = { hlColor = it },
                 finger = finger,
                 onFinger = { finger = it },
+                textSize = textSize,
+                onTextSize = { textSize = it },
                 canUndo = undo.isNotEmpty(),
                 onUndo = {
                     val (p, old) = undo.removeAt(undo.lastIndex)
@@ -568,7 +569,7 @@ fun ReaderScreen(
         pendingText?.let { (idx, pt, _) ->
             TextInputDialog("Texto na partitura", "", onDismiss = { pendingText = null }) { txt ->
                 val (path, pg) = keyOf(idx)
-                update(path) { it.add(pg, Ann("text", penColor, 0.032f, listOf(pt.x, pt.y), txt)) }
+                update(path) { it.add(pg, Ann("text", penColor, TextSizes[textSize], listOf(pt.x, pt.y), txt)) }
                 pendingText = null
             }
         }
@@ -649,6 +650,8 @@ private fun AnnotToolbar(
     onHlColor: (Int) -> Unit,
     finger: Int,
     onFinger: (Int) -> Unit,
+    textSize: Int,
+    onTextSize: (Int) -> Unit,
     canUndo: Boolean,
     onUndo: () -> Unit,
     page: String,
@@ -687,7 +690,7 @@ private fun AnnotToolbar(
                         Tool.HL -> HlColors.forEach { c -> ColorDot(c, c == hlColor) { onHlColor(c) } }
                         Tool.ANCHOR -> Hint("Toque no ponto: Intro, S, Coda…")
                         Tool.JUMP -> Hint("Toque no sinal (ex.: To Coda) e escolha a âncora de destino")
-                        Tool.ERASER -> Hint("Toque na anotação para apagar")
+                        Tool.ERASER -> Hint("Toque ou arraste o dedo sobre qualquer anotação para apagar")
                         else -> {
                             PenColors.forEach { c -> ColorDot(c, c == penColor) { onPenColor(c) } }
                             if (tool == Tool.FINGER) {
@@ -705,6 +708,23 @@ private fun AnnotToolbar(
                                             .clickable { onFinger(n) }
                                             .padding(top = 8.dp),
                                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                    )
+                                }
+                            }
+                            if (tool == Tool.TEXT || tool == Tool.FINGER) {
+                                Spacer(Modifier.width(8.dp))
+                                Text("Tamanho:", color = Color.LightGray, style = MaterialTheme.typography.labelMedium)
+                                listOf("P", "M", "G", "GG").forEachIndexed { i, l ->
+                                    Text(
+                                        l,
+                                        color = if (i == textSize) Color.Black else Color.White,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        modifier = Modifier
+                                            .padding(2.dp)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(if (i == textSize) Color(0xFF8AB4F8) else Color(0xFF3C4043))
+                                            .clickable { onTextSize(i) }
+                                            .padding(horizontal = 12.dp, vertical = 6.dp),
                                     )
                                 }
                             }
@@ -921,6 +941,17 @@ private fun PageView(
                                 event.changes.forEach { if (it.positionChanged()) it.consume() }
                             }
                         } while (event.changes.any { it.pressed })
+                    }
+                }
+        } else if (tool == Tool.ERASER) {
+            Modifier
+                .pointerInput(tool) {
+                    detectTapGestures(onTap = { p -> mapNow?.let { m -> toolTap(m.toPage(p), p, m) } })
+                }
+                .pointerInput(tool) {
+                    detectDragGestures(onDragStart = { p -> mapNow?.let { m -> toolTap(m.toPage(p), p, m) } }) { change, _ ->
+                        change.consume()
+                        mapNow?.let { m -> toolTap(m.toPage(change.position), change.position, m) }
                     }
                 }
         } else if (tool == Tool.PEN || tool == Tool.HL || tool == Tool.CIRCLE) {
