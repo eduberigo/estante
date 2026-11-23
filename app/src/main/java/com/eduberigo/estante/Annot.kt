@@ -288,14 +288,18 @@ object AnnDraw {
     /** Distância (em pixels de tela) de um toque até uma anotação, para a borracha. */
     fun distance(m: PageMap, a: Ann, at: Offset): Float = when (a.kind) {
         "pen", "hl" -> {
+            // Distância até cada trecho do traço (não só aos pontos).
             var best = Float.MAX_VALUE
-            var i = 0
+            var prev = m.toView(a.pts[0], a.pts[1])
+            best = minOf(best, hypot(prev.x - at.x, prev.y - at.y))
+            var i = 2
             while (i + 1 < a.pts.size) {
                 val p = m.toView(a.pts[i], a.pts[i + 1])
-                best = minOf(best, hypot(p.x - at.x, p.y - at.y))
+                best = minOf(best, segDist(at, prev, p))
+                prev = p
                 i += 2
             }
-            best
+            (best - a.w * m.pageW / 2f).coerceAtLeast(0f)
         }
         "circle" -> {
             val c = m.toView((a.pts[0] + a.pts[2]) / 2f, (a.pts[1] + a.pts[3]) / 2f)
@@ -304,11 +308,26 @@ object AnnDraw {
             kotlin.math.abs(hypot(at.x - c.x, at.y - c.y) - rad)
         }
         else -> {
+            // Texto/dedilhado: conta o tamanho da letra.
             val p = m.toView(a.pts[0], a.pts[1])
-            hypot(p.x - at.x, p.y - at.y)
+            val half = a.w * m.pageW * maxOf(1, a.text?.length ?: 1) * 0.35f
+            (hypot(p.x - at.x, p.y - at.y) - half).coerceAtLeast(0f)
         }
     }
+
+    private fun segDist(p: Offset, a: Offset, b: Offset): Float {
+        val dx = b.x - a.x
+        val dy = b.y - a.y
+        val len2 = dx * dx + dy * dy
+        if (len2 < 1e-6f) return hypot(p.x - a.x, p.y - a.y)
+        val t = (((p.x - a.x) * dx + (p.y - a.y) * dy) / len2).coerceIn(0f, 1f)
+        return hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
+    }
 }
+
+/** Tamanhos (fração da largura da página) para texto e dedilhado: P, M, G, GG. */
+val TextSizes = listOf(0.018f, 0.026f, 0.034f, 0.046f)
+val FingerSizes = listOf(0.008f, 0.012f, 0.016f, 0.022f)
 
 /** Rótulos sugeridos para âncoras. */
 val AnchorPresets = listOf("Intro", "A", "B", "Refrão", "Ponte", "Solo", "S", "S2", "Coda", "Coda 2", "Fine", "Final")
