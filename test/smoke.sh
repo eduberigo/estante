@@ -49,6 +49,9 @@ python3 test/tap.py "Garota de Ipanema" >> out/browse.txt; sleep 1; dump; python
 dump; python3 test/tap.py "Got it" > /dev/null; sleep 1
 adb shell input keyevent KEYCODE_BACK; sleep 3; dump; cp out/ui-tmp.xml out/ui-voltou.xml
 python3 test/tap.py "Agrupar por pasta" >> out/browse.txt; sleep 2; dump; cp out/ui-tmp.xml out/ui-pasta.xml
+python3 test/tap.py "tom F" long >> out/browse.txt; sleep 2; dump; cp out/ui-tmp.xml out/ui-sel.xml
+python3 test/tap.py "Opções" >> out/browse.txt; sleep 2; dump; cp out/ui-tmp.xml out/ui-opcoes.xml
+python3 test/tap.py "Pré-visualizar" >> out/browse.txt; sleep 2
 
 # 3b) Leitor + anotação pela interface
 dump() { adb shell uiautomator dump /sdcard/u.xml >/dev/null 2>&1; adb pull /sdcard/u.xml out/ui-tmp.xml >/dev/null 2>&1; }
@@ -94,6 +97,8 @@ for f in out/ui1.xml out/ui2.xml out/ui.xml; do echo "===== TEXTOS $f"; grep -o 
 echo "===== LEITOR"; grep -o 'text="[^"]*"' out/ui-leitor.xml | grep -v 'text=""' | head -30
 echo "===== ANOTACAO"; cat out/anot.txt; grep -o 'text="[^"]*"' out/ui-depois.xml | grep -v 'text=""' | head -30
 echo "===== BROWSE"; cat out/browse.txt; grep -o 'text="[^"]*"' out/ui-artistas.xml | grep -v 'text=""' | head -20; echo "--- artista"; grep -o 'text="[^"]*"' out/ui-artista1.xml | grep -v 'text=""' | head -12; echo "--- voltou do leitor"; grep -o 'text="[^"]*"' out/ui-voltou.xml | grep -v 'text=""' | head -12; echo "--- agrupado por pasta"; grep -o 'text="[^"]*"' out/ui-pasta.xml | grep -v 'text=""' | head -10
+echo "--- selecao"; grep -o 'text="[^"]*"\|checkable="true" checked="[a-z]*"' out/ui-sel.xml | grep -v 'text=""' | head -12
+echo "--- opcoes"; grep -o 'text="[^"]*"' out/ui-opcoes.xml | grep -v 'text=""' | head -20
 for f in out/ui-metro.xml out/ui-imagem.xml out/ui-recorte.xml; do echo "===== $f"; grep -o 'text="[^"]*"' $f | grep -v 'text=""' | head -25; done
 echo "===== AUTOTESTE"; grep -E "ESTANTE_SELFTEST" out/logcat-completo.txt; grep -E "W Estante" -A 4 out/logcat-completo.txt | head -40
 echo "===== ERROS"; grep -E "FATAL|AndroidRuntime|E/.*estante" -A 25 out/logcat-completo.txt | head -150

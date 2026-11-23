@@ -9,6 +9,9 @@ for m in re.finditer(r'<node [^>]*>', xml):
     if want in label:
         b = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', n)
         x = (int(b.group(1)) + int(b.group(3))) // 2; y = (int(b.group(2)) + int(b.group(4))) // 2
-        subprocess.run(["adb", "shell", "input", "tap", str(x), str(y)])
+        if len(sys.argv) > 2 and sys.argv[2] == "long":
+            subprocess.run(["adb", "shell", "input", "swipe", str(x), str(y), str(x), str(y), "900"])
+        else:
+            subprocess.run(["adb", "shell", "input", "tap", str(x), str(y)])
         print("tocou", want, x, y); sys.exit(0)
 print("NAO ACHOU", want)
