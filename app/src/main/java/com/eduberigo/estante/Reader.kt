@@ -271,6 +271,8 @@ fun ReaderScreen(
     }
 
     DisposableEffect(turn) {
+        // Já abre fora do "modo toque" (a primeira pisada do pedal não se perde).
+        activity.window.decorView.post { activity.leaveTouchMode() }
         activity.keyHandler = { code, down ->
             when (code) {
                 in nextKeys -> { if (down) turn(1); true }

@@ -84,6 +84,16 @@ adb shell input tap $((W/2)) $((H/2)); sleep 2; dump; python3 test/tap.py "Recor
 dump; cp out/ui-tmp.xml out/ui-recorte.xml; python3 test/tap.py "Só na tela" >> out/anot.txt; sleep 3
 adb exec-out screencap -p > out/3-anotado.png
 
+# 3c) Pedal: toque na tela e logo depois UMA seta para a direita deve virar a página
+adb shell am force-stop $PKG
+adb shell "am start -n $PKG/.MainActivity --es abrir '/sdcard/Partituras/Casamentos/Perfect - Ed Sheeran - X - pop - G - 95.pdf'"
+sleep 6
+adb shell input tap $((W/2)) $((H/2)); sleep 1     # mostra a barra (toque = entra em modo toque)
+adb shell input keyevent KEYCODE_DPAD_RIGHT; sleep 1
+dump; grep -o 'text="[0-9]* / [0-9]*"' out/ui-tmp.xml > out/pedal.txt
+adb shell input keyevent KEYCODE_DPAD_LEFT; sleep 1
+dump; grep -o 'text="[0-9]* / [0-9]*"' out/ui-tmp.xml >> out/pedal.txt
+
 # 4) Autoteste de PDF/exportação
 adb shell am force-stop $PKG
 adb shell am start -n $PKG/.MainActivity --es selftest /sdcard/Partituras/Casamentos
@@ -100,6 +110,7 @@ echo "===== BROWSE"; cat out/browse.txt; grep -o 'text="[^"]*"' out/ui-artistas.
 echo "--- selecao"; grep -o 'text="[^"]*"\|checkable="true" checked="[a-z]*"' out/ui-sel.xml | grep -v 'text=""' | head -12
 echo "--- opcoes"; grep -o 'text="[^"]*"' out/ui-opcoes.xml | grep -v 'text=""' | head -20
 for f in out/ui-metro.xml out/ui-imagem.xml out/ui-recorte.xml; do echo "===== $f"; grep -o 'text="[^"]*"' $f | grep -v 'text=""' | head -25; done
+echo "===== PEDAL (esperado 2 / 2 e depois 1 / 2)"; cat out/pedal.txt
 echo "===== AUTOTESTE"; grep -E "ESTANTE_SELFTEST" out/logcat-completo.txt; grep -E "W Estante" -A 4 out/logcat-completo.txt | head -40
 echo "===== ERROS"; grep -E "FATAL|AndroidRuntime|E/.*estante" -A 25 out/logcat-completo.txt | head -150
 echo "===== FIM"

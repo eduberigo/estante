@@ -69,6 +69,29 @@ class MainActivity : ComponentActivity() {
         hasPermission.value = Environment.isExternalStorageManager()
     }
 
+    /**
+     * Pedal Bluetooth: depois de um toque na tela o Android entra em "modo toque", e a PRIMEIRA seta
+     * que chega nesse modo é usada pelo sistema só para sair dele (o app nem recebe).
+     * Com o leitor aberto, saímos do modo toque logo após cada toque, para a próxima pisada nunca se perder.
+     */
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        val r = super.dispatchTouchEvent(ev)
+        val a = ev.actionMasked
+        if (keyHandler != null && (a == android.view.MotionEvent.ACTION_UP || a == android.view.MotionEvent.ACTION_CANCEL)) {
+            window.decorView.post { leaveTouchMode() }
+        }
+        return r
+    }
+
+    fun leaveTouchMode() {
+        val content = findViewById<android.view.ViewGroup>(android.R.id.content)
+        val target = content?.getChildAt(0) ?: return
+        if (target.isInTouchMode) {
+            target.isFocusableInTouchMode = true
+            target.requestFocusFromTouch()
+        }
+    }
+
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         KeyLog.add(event)
         val h = keyHandler
