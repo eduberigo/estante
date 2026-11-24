@@ -239,10 +239,22 @@ fun App(hasPermission: Boolean, requestPermission: () -> Unit) {
         return
     }
     val ctx = LocalContext.current
-    val prefs = remember { Prefs(ctx) }
-    val explorer = remember { ExplorerState(prefs) }
-    val lib = remember { Library(ctx).also { Ratings.init(ctx) } }
     val activity = LocalContext.current as MainActivity
+    val prefs = remember {
+        // Teste automático: começa sempre das configurações padrão.
+        if (activity.intent?.getBooleanExtra("limpar", false) == true) {
+            ctx.getSharedPreferences("estante", android.content.Context.MODE_PRIVATE).edit().clear().commit()
+        }
+        Prefs(ctx)
+    }
+    val explorer = remember {
+        ExplorerState(prefs).also { st ->
+            // Usados pelo teste automático: fixar pastas no Início e abrir uma pasta direto.
+            activity.intent?.getStringExtra("fixar")?.split('|')?.forEach { if (it !in st.pinned) st.togglePin(it) }
+            activity.intent?.getStringExtra("pasta")?.let { st.navigate(File(it)) }
+        }
+    }
+    val lib = remember { Library(ctx).also { Ratings.init(ctx) } }
     var reading by remember {
         // Usado pelo teste automático: abrir direto um arquivo no leitor.
         mutableStateOf(activity.intent?.getStringExtra("abrir")?.let { Reading(listOf(File(it)), 0, null) })

@@ -2,11 +2,18 @@ name: Teste no emulador
 
 on:
   workflow_dispatch:
+    inputs:
+      teste:
+        description: 'tudo ou botoes'
+        default: 'tudo'
+      tempo:
+        description: 'segundos para o teste de botões'
+        default: '2400'
 
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -36,7 +43,7 @@ jobs:
           arch: x86_64
           profile: pixel_tablet
           disable-animations: true
-          script: bash test/smoke.sh
+          script: bash test/run.sh "${{ inputs.teste }}" "${{ inputs.tempo }}"
 
       - name: Enviar resultados
         if: always()
