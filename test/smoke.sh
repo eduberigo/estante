@@ -78,7 +78,8 @@ adb shell input tap $((W/2)) $((H/2)); sleep 2; dump; python3 test/tap.py "Metr�
 dump; python3 test/tap.py "Contagem" >> out/anot.txt; sleep 1; dump; cp out/ui-tmp.xml out/ui-metro.xml
 python3 test/tap.py "Fechar" >> out/anot.txt; sleep 1
 adb shell input tap $((W/2)) $((H/2)); sleep 2; dump; python3 test/tap.py "Imagem" >> out/anot.txt; sleep 2
-dump; cp out/ui-tmp.xml out/ui-imagem.xml; python3 test/tap.py "Legível" >> out/anot.txt; sleep 3
+dump; cp out/ui-tmp.xml out/ui-imagem.xml; python3 test/slider.py > out/slider.txt; sleep 2
+python3 test/tap.py "Legível" >> out/anot.txt; sleep 3
 dump; python3 test/tap.py "Fechar" >> out/anot.txt; sleep 1
 adb shell input tap $((W/2)) $((H/2)); sleep 2; dump; python3 test/tap.py "Recortar" >> out/anot.txt; sleep 3
 dump; cp out/ui-tmp.xml out/ui-recorte.xml; python3 test/tap.py "Só na tela" >> out/anot.txt; sleep 3
@@ -111,6 +112,7 @@ echo "--- selecao"; grep -o 'text="[^"]*"\|checkable="true" checked="[a-z]*"' ou
 echo "--- opcoes"; grep -o 'text="[^"]*"' out/ui-opcoes.xml | grep -v 'text=""' | head -20
 for f in out/ui-metro.xml out/ui-imagem.xml out/ui-recorte.xml; do echo "===== $f"; grep -o 'text="[^"]*"' $f | grep -v 'text=""' | head -25; done
 echo "===== PEDAL (esperado 2 / 2 e depois 1 / 2)"; cat out/pedal.txt
+echo "===== BARRA PRETO (esperado 3 ajustes)"; cat out/slider.txt; grep -c "ajuste de imagem" out/logcat-completo.txt; grep -o "ajuste de imagem.*" out/logcat-completo.txt | head -5
 echo "===== AUTOTESTE"; grep -E "ESTANTE_SELFTEST" out/logcat-completo.txt; grep -E "W Estante" -A 4 out/logcat-completo.txt | head -40
 echo "===== ERROS"; grep -E "FATAL|AndroidRuntime|E/.*estante" -A 25 out/logcat-completo.txt | head -150
 echo "===== FIM"

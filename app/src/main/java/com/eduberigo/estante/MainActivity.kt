@@ -70,26 +70,37 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Pedal Bluetooth: depois de um toque na tela o Android entra em "modo toque", e a PRIMEIRA seta
-     * que chega nesse modo é usada pelo sistema só para sair dele (o app nem recebe).
-     * Com o leitor aberto, saímos do modo toque logo após cada toque, para a próxima pisada nunca se perder.
+     * Pedal Bluetooth: depois de um toque na tela o Android fica em "modo toque", e a PRIMEIRA seta
+     * que chega é usada pelo sistema para sair desse modo (o app nem recebe) — a não ser que uma
+     * View simples (não um grupo) esteja com o foco. Por isso, com o leitor aberto, um receptor
+     * invisível fica com o foco. Os toques na tela não são alterados.
      */
-    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
-        val r = super.dispatchTouchEvent(ev)
-        val a = ev.actionMasked
-        if (keyHandler != null && (a == android.view.MotionEvent.ACTION_UP || a == android.view.MotionEvent.ACTION_CANCEL)) {
-            window.decorView.post { leaveTouchMode() }
+    private var keyCatcher: android.view.View? = null
+
+    fun focusKeyCatcher(on: Boolean) {
+        val content = findViewById<android.widget.FrameLayout>(android.R.id.content) ?: return
+        val v = keyCatcher ?: android.view.View(this).also {
+            it.isFocusable = true
+            it.isFocusableInTouchMode = true
+            it.importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            it.defaultFocusHighlightEnabled = false
+            content.addView(it, android.widget.FrameLayout.LayoutParams(1, 1))
+            keyCatcher = it
         }
-        return r
+        if (on) v.requestFocus() else v.clearFocus()
     }
 
-    fun leaveTouchMode() {
-        val content = findViewById<android.view.ViewGroup>(android.R.id.content)
-        val target = content?.getChildAt(0) ?: return
-        if (target.isInTouchMode) {
-            target.isFocusableInTouchMode = true
-            target.requestFocusFromTouch()
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        val r = super.dispatchTouchEvent(ev)
+        // Se um toque mudou o foco (ex.: campo de texto), devolve ao receptor quando o dedo sai.
+        val a = ev.actionMasked
+        if (keyHandler != null && a == android.view.MotionEvent.ACTION_UP) {
+            val v = keyCatcher
+            if (v != null && !v.isFocused && currentFocus !is android.widget.EditText) {
+                window.decorView.post { if (keyHandler != null) v.requestFocus() }
+            }
         }
+        return r
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {

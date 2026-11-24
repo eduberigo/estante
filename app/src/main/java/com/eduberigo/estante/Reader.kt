@@ -271,8 +271,8 @@ fun ReaderScreen(
     }
 
     DisposableEffect(turn) {
-        // Já abre fora do "modo toque" (a primeira pisada do pedal não se perde).
-        activity.window.decorView.post { activity.leaveTouchMode() }
+        // Foco num receptor de teclas invisível: a primeira pisada do pedal não se perde.
+        activity.window.decorView.post { activity.focusKeyCatcher(true) }
         activity.keyHandler = { code, down ->
             when (code) {
                 in nextKeys -> { if (down) turn(1); true }
@@ -280,7 +280,10 @@ fun ReaderScreen(
                 else -> false
             }
         }
-        onDispose { activity.keyHandler = null }
+        onDispose {
+            activity.keyHandler = null
+            activity.focusKeyCatcher(false)
+        }
     }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
@@ -350,21 +353,6 @@ fun ReaderScreen(
                 value = nowText()
                 kotlinx.coroutines.delay(1000L * (60 - java.util.Calendar.getInstance().get(java.util.Calendar.SECOND)).coerceAtLeast(1))
             }
-        }
-
-        // Relógio discreto, sempre visível.
-        if (!showBars && tool == null) {
-            Text(
-                if (position != null) "${position.first + 1}/${position.second} • $clock" else clock,
-                color = Color.White,
-                style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .displayCutoutPadding()
-                    .padding(8.dp)
-                    .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(8.dp))
-                    .padding(horizontal = 8.dp, vertical = 3.dp),
-            )
         }
 
         // Atalhos para as âncoras (Intro, S, Coda…), discretos no canto de baixo.
@@ -520,7 +508,10 @@ fun ReaderScreen(
             val (ipath, _) = keyOf(pager.currentPage)
             ImagePanel(
                 look = notes[ipath]?.look ?: Look(),
-                onLook = { lk -> update(ipath) { it.copy(look = if (lk.isDefault) null else lk) } },
+                onLook = { lk ->
+                    android.util.Log.i("Estante", "ajuste de imagem: $lk")
+                    update(ipath) { it.copy(look = if (lk.isDefault) null else lk) }
+                },
                 onApplyFile = { applyFile = ipath },
                 onClose = { imagePanel = false },
                 modifier = Modifier.align(Alignment.BottomCenter),
@@ -650,6 +641,23 @@ fun ReaderScreen(
                     }
                 },
                 confirmButton = { TextButton(onClick = { anchorList = false }) { Text("Fechar") } },
+            )
+        }
+
+        // Relógio sempre visível, por cima de tudo (anotação, painéis, recorte).
+        // Com a barra de cima aberta, o relógio aparece dentro dela.
+        if (!showBars || tool != null || cropEdit) {
+            Text(
+                if (position != null) "${position.first + 1}/${position.second} • $clock" else clock,
+                color = Color.White,
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .statusBarsPadding()
+                    .displayCutoutPadding()
+                    .padding(8.dp)
+                    .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
             )
         }
     }
