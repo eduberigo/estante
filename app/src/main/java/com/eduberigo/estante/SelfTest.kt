@@ -117,6 +117,22 @@ object SelfTest {
                     Meta.partFreq = saved
                     Meta.soloFreq = savedSolo
                 }
+                run {
+                    // Biblioteca grande simulada: 20 mil nomes.
+                    val big = File(ctx.getExternalFilesDir(null), "grande").apply { mkdirs() }
+                    if ((big.list()?.size ?: 0) < 20000) {
+                        for (i in 1..20000) File(big, "Musica ${i % 997} - Artista ${i % 311} - X - pop - C - ${60 + i % 100} ($i).pdf").createNewFile()
+                    }
+                    var t = System.currentTimeMillis()
+                    val listed = Fs.list(big)
+                    Log.i(tag, "desempenho: listar+ordenar ${listed.size} arquivos = ${System.currentTimeMillis() - t} ms")
+                    t = System.currentTimeMillis()
+                    val infos = listed.map { Meta.info(it.file.nameWithoutExtension) }
+                    Log.i(tag, "desempenho: ler artista/título de ${infos.size} = ${System.currentTimeMillis() - t} ms")
+                    t = System.currentTimeMillis()
+                    val sorted = infos.sortedWith(Comparator { a, b -> NaturalOrder.compare(a.title, b.title) })
+                    Log.i(tag, "desempenho: ordenar ${sorted.size} títulos = ${System.currentTimeMillis() - t} ms")
+                }
                 Log.i(tag, "FIM OK")
             } catch (e: Throwable) {
                 Log.e(tag, "FALHOU", e)

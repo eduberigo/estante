@@ -98,7 +98,7 @@ dump; grep -o 'text="[0-9]* / [0-9]*"' out/ui-tmp.xml >> out/pedal.txt
 # 4) Autoteste de PDF/exportação
 adb shell am force-stop $PKG
 adb shell am start -n $PKG/.MainActivity --es selftest /sdcard/Partituras/Casamentos
-sleep 35
+sleep 75
 
 adb logcat -d > out/logcat-completo.txt
 grep -E "AndroidRuntime|FATAL|$PKG|estante" out/logcat-completo.txt > out/logcat-app.txt
