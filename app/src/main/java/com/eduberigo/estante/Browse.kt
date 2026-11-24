@@ -120,13 +120,17 @@ fun BrowseContent(
         val f = Fs.norm(filter.trim())
         if (kind == BrowseKind.TITLE || group != null) {
             // Lista de músicas.
-            val list = remember(all, kind, group, f) {
-                all.asSequence()
-                    .filter { group == null || BrowseData.valuesOf(kind, it).any { v -> Meta.key(v) == Meta.key(group) } }
-                    .filter { f.isEmpty() || Fs.norm(it.info.title + " " + (it.info.artist ?: "")).contains(f) }
-                    .sortedWith(Comparator { a, b -> NaturalOrder.compare(a.info.title, b.info.title) })
-                    .take(3000)
-                    .toList()
+            // Filtrar e ordenar milhares de itens em segundo plano (a tela continua respondendo ao toque).
+            val list by produceState(emptyList<BrowseItem>(), all, kind, group, f) {
+                value = withContext(Dispatchers.Default) {
+                    val g = group?.let { Meta.key(it) }
+                    all.asSequence()
+                        .filter { g == null || BrowseData.valuesOf(kind, it).any { v -> Meta.key(v) == g } }
+                        .filter { f.isEmpty() || Fs.norm(it.info.title + " " + (it.info.artist ?: "")).contains(f) }
+                        .sortedWith(Comparator { a, b -> NaturalOrder.compare(a.info.title, b.info.title) })
+                        .take(3000)
+                        .toList()
+                }
             }
             Text(
                 "${list.size}${if (list.size >= 3000) "+" else ""} músicas" + (group?.let { " • $it" } ?: ""),
@@ -135,7 +139,9 @@ fun BrowseContent(
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
             val byPath = remember(list) { list.associateBy { it.path } }
-            val entries = remember(list) { list.map { Fs.entry(File(it.path)) } }
+            val entries by produceState(emptyList<Entry>(), list) {
+                value = withContext(Dispatchers.IO) { list.map { Fs.entry(File(it.path)) } }
+            }
             EntryRows(
                 state = state,
                 list = entries,
@@ -155,15 +161,17 @@ fun BrowseContent(
             )
         } else {
             // Lista de grupos (artistas, gêneros, tons).
-            val groups = remember(all, kind, f) {
-                all.flatMap { BrowseData.valuesOf(kind, it) }.groupingBy { it }.eachCount()
-                    .filter { f.isEmpty() || Fs.norm(it.key).contains(f) }
-                    .entries
-                    .sortedWith(Comparator { a, b ->
-                        val sa = a.key.startsWith("(")
-                        val sb = b.key.startsWith("(")
-                        if (sa != sb) (if (sa) 1 else -1) else NaturalOrder.compare(a.key, b.key)
-                    })
+            val groups by produceState(emptyList<Map.Entry<String, Int>>(), all, kind, f) {
+                value = withContext(Dispatchers.Default) {
+                    all.flatMap { BrowseData.valuesOf(kind, it) }.groupingBy { it }.eachCount()
+                        .filter { f.isEmpty() || Fs.norm(it.key).contains(f) }
+                        .entries
+                        .sortedWith(Comparator { a, b ->
+                            val sa = a.key.startsWith("(")
+                            val sb = b.key.startsWith("(")
+                            if (sa != sb) (if (sa) 1 else -1) else NaturalOrder.compare(a.key, b.key)
+                        })
+                }
             }
             Text(
                 "${groups.size} ${kind.plural.lowercase()} • estimado pelo nome dos arquivos",

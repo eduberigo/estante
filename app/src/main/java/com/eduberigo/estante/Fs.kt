@@ -117,26 +117,37 @@ object Fs {
 
 /** Ordem natural: "Faixa 2" antes de "Faixa 10"; acentos e maiúsculas não importam. */
 object NaturalOrder : Comparator<String> {
-    private val collator: Collator =
-        Collator.getInstance(Locale("pt", "BR")).apply { strength = Collator.PRIMARY }
-    private val token = Regex("\\d+|\\D+")
+    // Chave de ordenação calculada uma vez por nome (rápido mesmo com dezenas de milhares de arquivos):
+    // sem acento, minúsculas, e números com zeros à esquerda ("2" < "10").
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    fun key(s: String): String {
+        cache[s]?.let { return it }
+        val n = Fs.norm(s)
+        val sb = StringBuilder(n.length + 16)
+        var i = 0
+        while (i < n.length) {
+            val c = n[i]
+            if (c.isDigit()) {
+                var j = i
+                while (j < n.length && n[j].isDigit()) j++
+                val digits = n.substring(i, j).trimStart('0')
+                repeat((12 - digits.length).coerceAtLeast(0)) { sb.append('0') }
+                sb.append(digits)
+                i = j
+            } else {
+                sb.append(c)
+                i++
+            }
+        }
+        val k = sb.toString()
+        if (cache.size > 200_000) cache.clear()
+        cache[s] = k
+        return k
+    }
 
     override fun compare(a: String, b: String): Int {
-        val ta = token.findAll(a).map { it.value }.toList()
-        val tb = token.findAll(b).map { it.value }.toList()
-        val n = minOf(ta.size, tb.size)
-        for (i in 0 until n) {
-            val x = ta[i]
-            val y = tb[i]
-            val c = if (x[0].isDigit() && y[0].isDigit()) {
-                val bx = x.trimStart('0')
-                val by = y.trimStart('0')
-                if (bx.length != by.length) bx.length - by.length else bx.compareTo(by)
-            } else {
-                synchronized(collator) { collator.compare(x, y) }
-            }
-            if (c != 0) return c
-        }
-        return ta.size - tb.size
+        val c = key(a).compareTo(key(b))
+        return if (c != 0) c else a.compareTo(b)
     }
 }

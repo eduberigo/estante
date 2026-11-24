@@ -208,6 +208,7 @@ class ExplorerState(private val prefs: Prefs) {
             return p
         }
         favorites = favorites.map(::map)
+        favSet = favorites.toHashSet()
         prefs.favorites = favorites
         pinned = pinned.map(::map)
         prefs.pinned = pinned
@@ -349,10 +350,15 @@ class ExplorerState(private val prefs: Prefs) {
         prefs.pinned = pinned
     }
 
-    fun isFav(path: String) = path in favorites
+    private var favSet: Set<String> = favorites.toHashSet()
+    fun isFav(path: String): Boolean {
+        if (favSet.size != favorites.size) favSet = favorites.toHashSet()
+        return path in favSet
+    }
 
     fun toggleFav(path: String) {
         favorites = if (path in favorites) favorites - path else listOf(path) + favorites
+        favSet = favorites.toHashSet()
         prefs.favorites = favorites
     }
 
@@ -466,7 +472,7 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
         }
     }
 
-    val roots = state.searchRoots(volumes)
+    val roots = remember(state.pinned, volumes) { state.searchRoots(volumes) }
     val rootsKey = roots.joinToString("|") { it.absolutePath }
 
     // Índice em segundo plano: deixa a busca pronta e ajuda a estimar artistas.
@@ -1987,9 +1993,16 @@ fun PreviewPane(
         return
     }
     val viewable = entry.kind == Kind.PDF || entry.kind == Kind.IMAGE
-    val doc = remember(entry.path) { if (viewable) openDoc(entry.file) else null }
-    DisposableEffect(doc) { onDispose { doc?.close() } }
-    var page by remember(entry.path) { mutableIntStateOf(doc?.startPage ?: 0) }
+    // Abrir o PDF (ou listar as imagens da pasta) fora da linha do toque.
+    val docState by produceState<Pair<Boolean, Doc?>>(false to null, entry.path) {
+        val d = if (viewable) withContext(Dispatchers.IO) { openDoc(entry.file) } else null
+        value = true to d
+        awaitDispose { d?.close() }
+    }
+    val docLoaded = docState.first
+    val doc = docState.second
+    var page by remember(entry.path) { mutableIntStateOf(0) }
+    LaunchedEffect(doc) { doc?.let { page = it.startPage } }
     var zoom by remember(entry.path, page) { mutableFloatStateOf(1f) }
     var pan0 by remember(entry.path, page) { mutableStateOf(Offset.Zero) }
     val pages = doc?.pageCount ?: 0
@@ -2096,6 +2109,7 @@ fun PreviewPane(
                         CircularProgressIndicator()
                     }
                 }
+                viewable && !docLoaded -> CircularProgressIndicator()
                 viewable -> Text("Não foi possível abrir este arquivo")
                 else -> Icon(
                     painterResource(R.drawable.ic_file), null,

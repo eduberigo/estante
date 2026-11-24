@@ -145,8 +145,13 @@ fun ReaderScreen(
         }
     }
     var reloadKey by remember { mutableStateOf(0) }
-    val doc = remember(file, reloadKey) { openDoc(file) }
-    DisposableEffect(doc) { onDispose { doc?.close() } }
+    // Abre o arquivo fora da linha do toque (PDF grande ou pasta com muitas imagens não travam a tela).
+    val docState by produceState<Pair<Boolean, Doc?>>(false to null, file, reloadKey) {
+        val d = withContext(Dispatchers.IO) { openDoc(file) }
+        value = true to d
+        awaitDispose { d?.close() }
+    }
+    val doc = docState.second
 
     // Tela cheia (opcional) e tela sempre ligada enquanto lê.
     // Sem tela cheia, os gestos de borda do sistema (One Hand Operation+, voltar) funcionam sempre na primeira vez.
@@ -165,6 +170,12 @@ fun ReaderScreen(
         }
     }
 
+    if (!docState.first) {
+        Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = Color.DarkGray)
+        }
+        return
+    }
     if (doc == null) {
         Column(
             Modifier.fillMaxSize().background(Color.Black).padding(32.dp),
