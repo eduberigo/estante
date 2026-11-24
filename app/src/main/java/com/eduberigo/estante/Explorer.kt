@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -41,6 +42,7 @@ import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -420,6 +422,8 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
     var backup by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf<Entry?>(null) }
     var bulk by remember { mutableStateOf(false) }
+    var pedalTest by remember { mutableStateOf(false) }
+    var fullscreenPref by remember { mutableStateOf(Prefs(ctx).readerFullscreen) }
 
     /** Depois de apagar/mover/renomear/criar: índice da busca atualizado. */
     fun reindex(removed: Collection<String> = emptyList()) {
@@ -725,6 +729,17 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                                     }
                                     HorizontalDivider()
                                     DropdownMenuItem(
+                                        text = { Text(if (fullscreenPref) "Leitor em tela cheia: ligado" else "Leitor em tela cheia: desligado") },
+                                        onClick = {
+                                            fullscreenPref = !fullscreenPref
+                                            Prefs(ctx).readerFullscreen = fullscreenPref
+                                        },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Testar pedal…") },
+                                        onClick = { menuOpen = false; pedalTest = true },
+                                    )
+                                    DropdownMenuItem(
                                         text = { Text("Backup…") },
                                         onClick = { menuOpen = false; backup = true },
                                     )
@@ -1000,6 +1015,28 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
             )
         }
 
+        if (pedalTest) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { pedalTest = false },
+                title = { Text("Testar pedal") },
+                text = {
+                    Column {
+                        Text(
+                            "Aperte o pedal. Cada toque que chega ao app aparece aqui, com o horário. " +
+                                "Se você apertar e nada aparecer, o comando não chegou ao tablet (o pedal pode estar " +
+                                "em economia de energia ou reconectando o Bluetooth).",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Column(Modifier.padding(top = 8.dp).heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
+                            if (KeyLog.events.isEmpty()) Text("Nenhum toque recebido ainda.", style = MaterialTheme.typography.labelMedium)
+                            KeyLog.events.forEach { Text(it, style = MaterialTheme.typography.labelMedium) }
+                        }
+                    }
+                },
+                confirmButton = { androidx.compose.material3.TextButton(onClick = { pedalTest = false }) { Text("Fechar") } },
+                dismissButton = { androidx.compose.material3.TextButton(onClick = { KeyLog.events.clear() }) { Text("Limpar") } },
+            )
+        }
         if (bulk) {
             BulkDialog(
                 count = state.selection.size,

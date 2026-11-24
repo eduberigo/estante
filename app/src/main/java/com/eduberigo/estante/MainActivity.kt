@@ -70,6 +70,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        KeyLog.add(event)
         val h = keyHandler
         if (h != null) {
             val down = event.action == KeyEvent.ACTION_DOWN
@@ -142,6 +143,11 @@ class Prefs(ctx: Context) {
     var textScale: Float
         get() = sp.getFloat("textScale", 1f)
         set(v) { sp.edit().putFloat("textScale", v).apply() }
+
+    /** Leitor em tela cheia (esconde as barras do sistema). */
+    var readerFullscreen: Boolean
+        get() = sp.getBoolean("readerFullscreen", true)
+        set(v) { sp.edit().putBoolean("readerFullscreen", v).apply() }
 
     var autoCrop: Boolean
         get() = sp.getBoolean("autoCrop", true)
@@ -285,4 +291,18 @@ fun PermissionScreen(onRequest: () -> Unit) {
 /** Eventos do app observados pelas telas (ex.: voltou ao app → atualizar o índice). */
 object AppEvents {
     val resumed = kotlinx.coroutines.flow.MutableStateFlow(0)
+}
+
+/** Registro das últimas teclas recebidas (para testar o pedal Bluetooth). */
+object KeyLog {
+    val events = androidx.compose.runtime.mutableStateListOf<String>()
+    private val fmt = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US)
+
+    fun add(e: KeyEvent) {
+        if (e.action != KeyEvent.ACTION_DOWN) return
+        val dev = e.device?.name ?: "?"
+        events.add(0, "${fmt.format(java.util.Date())}  ${KeyEvent.keyCodeToString(e.keyCode).removePrefix("KEYCODE_")}" +
+            (if (e.repeatCount > 0) " (repetição)" else "") + "  • $dev")
+        while (events.size > 40) events.removeAt(events.lastIndex)
+    }
 }

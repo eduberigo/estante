@@ -148,13 +148,17 @@ fun ReaderScreen(
     val doc = remember(file, reloadKey) { openDoc(file) }
     DisposableEffect(doc) { onDispose { doc?.close() } }
 
-    // Tela cheia e tela sempre ligada enquanto lê.
+    // Tela cheia (opcional) e tela sempre ligada enquanto lê.
+    // Sem tela cheia, os gestos de borda do sistema (One Hand Operation+, voltar) funcionam sempre na primeira vez.
+    val fullscreen = remember { Prefs(ctx).readerFullscreen }
     DisposableEffect(Unit) {
         val window = activity.window
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val ctrl = WindowCompat.getInsetsController(window, window.decorView)
-        ctrl.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        ctrl.hide(WindowInsetsCompat.Type.systemBars())
+        if (fullscreen) {
+            ctrl.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            ctrl.hide(WindowInsetsCompat.Type.systemBars())
+        }
         onDispose {
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             ctrl.show(WindowInsetsCompat.Type.systemBars())
@@ -242,15 +246,25 @@ fun ReaderScreen(
         if (a != null) goTo(a.first)
     }
 
+    // Destino da virada em andamento (para toques/pedal rápidos em sequência não se perderem).
+    var aim by remember { mutableIntStateOf(-1) }
     val turn: (Int) -> Unit = remember(pager, count) {
         { delta ->
-            val raw = pager.currentPage + delta
+            val base = if (aim >= 0 && pager.isScrollInProgress) aim else pager.currentPage
+            val raw = base + delta
             when {
                 raw > count - 1 && nextSong != null -> nextSong?.invoke()
                 raw < 0 && prevSong != null -> prevSong?.invoke(true)
                 else -> {
                     val target = raw.coerceIn(0, count - 1)
-                    if (target != pager.currentPage) scope.launch { pager.scrollToPage(target) }
+                    if (target != base) {
+                        aim = target
+                        // Deslize curto e discreto (~0,18 s), para perceber que a página trocou.
+                        scope.launch {
+                            pager.animateScrollToPage(target, animationSpec = androidx.compose.animation.core.tween(180))
+                            if (aim == target) aim = -1
+                        }
+                    }
                 }
             }
         }
@@ -273,6 +287,11 @@ fun ReaderScreen(
             modifier = Modifier.fillMaxSize(),
             beyondViewportPageCount = 1,
             userScrollEnabled = tool == null,
+            // Um deslize curto (18% da tela) já vira a página.
+            flingBehavior = androidx.compose.foundation.pager.PagerDefaults.flingBehavior(
+                state = pager,
+                snapPositionalThreshold = 0.18f,
+            ),
             key = { it },
         ) { index ->
             val (path, pg) = keyOf(index)
@@ -899,7 +918,26 @@ private fun PageView(
         val gestures = if (tool == null) {
             Modifier
                 .pointerInput(Unit) {
-                    detectTapGestures(onTap = { p ->
+                    // Toque tolerante: conta como toque mesmo se o dedo escorregar um pouco (até ~3x a folga padrão).
+                    val slop = viewConfiguration.touchSlop * 3f
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val t0 = down.uptimeMillis
+                        var moved = 0f
+                        var multi = false
+                        var up: androidx.compose.ui.input.pointer.PointerInputChange? = null
+                        while (true) {
+                            val ev = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                            if (ev.changes.size > 1) multi = true
+                            val c = ev.changes.firstOrNull { it.id == down.id } ?: break
+                            moved = maxOf(moved, (c.position - down.position).getDistance())
+                            if (!c.pressed) { up = c; break }
+                        }
+                        val u = up ?: return@awaitEachGesture
+                        if (multi || moved > slop || u.uptimeMillis - t0 > 600 || scale > 1.01f && moved > viewConfiguration.touchSlop) {
+                            return@awaitEachGesture
+                        }
+                        val p = u.position
                         val m = mapNow
                         if (m != null) {
                             val q = unzoom(p)
@@ -909,11 +947,11 @@ private fun PageView(
                             }
                             if (hit != null) {
                                 jumpHandler(hit.target)
-                                return@detectTapGestures
+                                return@awaitEachGesture
                             }
                         }
                         tapHandler(p.x / size.width)
-                    })
+                    }
                 }
                 .pointerInput(Unit) {
                     awaitEachGesture {
