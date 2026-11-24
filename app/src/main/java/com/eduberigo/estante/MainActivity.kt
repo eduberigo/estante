@@ -280,12 +280,12 @@ fun App(hasPermission: Boolean, requestPermission: () -> Unit) {
             androidx.compose.foundation.layout.Box(
                 Modifier
                     .fillMaxSize()
-                    // Nenhum toque atravessa o leitor até a lista de baixo.
+                    // Nenhum toque atravessa o leitor até a lista de baixo. Basta o leitor "receber" o toque
+                    // (a lista fica por baixo e não é atingida). NÃO consumir aqui: consumir no passo final
+                    // cancelava os botões do leitor sempre que o dedo mexia um tiquinho durante o toque.
                     .pointerInput(Unit) {
                         awaitPointerEventScope {
-                            while (true) {
-                                awaitPointerEvent(PointerEventPass.Final).changes.forEach { it.consume() }
-                            }
+                            while (true) awaitPointerEvent(PointerEventPass.Final)
                         }
                     }
             ) {
