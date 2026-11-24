@@ -91,6 +91,9 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        if (ev.actionMasked == android.view.MotionEvent.ACTION_DOWN || ev.actionMasked == android.view.MotionEvent.ACTION_UP) {
+            android.util.Log.i("Estante", "toque ${if (ev.actionMasked == 0) "desce" else "sobe"} x=${ev.x.toInt()} foco=${currentFocus?.javaClass?.simpleName}")
+        }
         val r = super.dispatchTouchEvent(ev)
         // Se um toque mudou o foco (ex.: campo de texto), devolve ao receptor quando o dedo sai.
         val a = ev.actionMasked

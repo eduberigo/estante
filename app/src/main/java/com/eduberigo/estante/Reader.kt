@@ -465,11 +465,11 @@ fun ReaderScreen(
                         .navigationBarsPadding()
                         .padding(horizontal = 24.dp, vertical = 8.dp)
                 ) {
-                    Slider(
+                    EasySlider(
                         value = pos,
-                        onValueChange = { pos = it },
-                        onValueChangeFinished = { goTo(pos.roundToInt()) },
-                        valueRange = 0f..(count - 1).toFloat(),
+                        range = 0f..(count - 1).toFloat(),
+                        onChange = { pos = it },
+                        onDone = { goTo(pos.roundToInt()) },
                     )
                 }
             }
@@ -948,6 +948,7 @@ private fun PageView(
                             return@awaitEachGesture
                         }
                         val p = u.position
+                        android.util.Log.i("Estante", "toque no leitor x=${p.x.toInt()} de ${size.width}")
                         val m = mapNow
                         if (m != null) {
                             val q = unzoom(p)
@@ -1168,7 +1169,7 @@ private fun MetronomePanel(metro: Metronome, modifier: Modifier, onClose: () -> 
                     }
                 }
             }
-            Slider(value = bpm.toFloat(), onValueChange = { setBpm(it.roundToInt()) }, valueRange = 30f..260f)
+            EasySlider(value = bpm.toFloat(), range = 30f..260f, onChange = { setBpm(it.roundToInt()) }, onDone = {})
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.horizontalScroll(rememberScrollState())) {
                 Text("Compasso:", color = Color.LightGray, modifier = Modifier.padding(end = 6.dp))
                 listOf(2, 3, 4, 6).forEach { b ->
@@ -1282,10 +1283,61 @@ private fun SliderRow(
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(label, color = Color.White, modifier = Modifier.width(64.dp))
         Text(left, color = Color.Gray, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(70.dp))
-        Slider(
-            value = value, onValueChange = onChange, onValueChangeFinished = onDone,
-            valueRange = range, modifier = Modifier.weight(1f),
-        )
+        EasySlider(value = value, range = range, onChange = onChange, onDone = onDone, modifier = Modifier.weight(1f))
         Text(right, color = Color.Gray, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(78.dp).padding(start = 6.dp))
+    }
+}
+
+
+/**
+ * Barra deslizante simples e confiável: tocar em qualquer ponto já leva o valor até ali;
+ * arrastar ajusta; área de toque alta (48 dp).
+ */
+@Composable
+internal fun EasySlider(
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    onChange: (Float) -> Unit,
+    onDone: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val change by rememberUpdatedState(onChange)
+    val done by rememberUpdatedState(onDone)
+    val span = (range.endInclusive - range.start).takeIf { it > 0f } ?: 1f
+    val frac = ((value - range.start) / span).coerceIn(0f, 1f)
+    val thumbR = 11.dp
+    Canvas(
+        modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .pointerInput(range) {
+                val pad = thumbR.toPx()
+                fun toValue(x: Float): Float {
+                    val f = ((x - pad) / (size.width - 2 * pad)).coerceIn(0f, 1f)
+                    return range.start + f * span
+                }
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    down.consume()
+                    change(toValue(down.position.x))
+                    while (true) {
+                        val ev = awaitPointerEvent()
+                        val c = ev.changes.firstOrNull { it.id == down.id } ?: break
+                        if (!c.pressed) break
+                        if (c.positionChanged()) {
+                            c.consume()
+                            change(toValue(c.position.x))
+                        }
+                    }
+                    done()
+                }
+            }
+    ) {
+        val pad = thumbR.toPx()
+        val y = size.height / 2f
+        val w = size.width - 2 * pad
+        drawLine(Color(0xFF5F6368), Offset(pad, y), Offset(pad + w, y), strokeWidth = 4.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round)
+        drawLine(Color(0xFF8AB4F8), Offset(pad, y), Offset(pad + w * frac, y), strokeWidth = 4.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round)
+        drawCircle(Color(0xFF8AB4F8), pad, Offset(pad + w * frac, y))
     }
 }

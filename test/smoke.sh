@@ -112,6 +112,7 @@ echo "--- selecao"; grep -o 'text="[^"]*"\|checkable="true" checked="[a-z]*"' ou
 echo "--- opcoes"; grep -o 'text="[^"]*"' out/ui-opcoes.xml | grep -v 'text=""' | head -20
 for f in out/ui-metro.xml out/ui-imagem.xml out/ui-recorte.xml; do echo "===== $f"; grep -o 'text="[^"]*"' $f | grep -v 'text=""' | head -25; done
 echo "===== PEDAL (esperado 2 / 2 e depois 1 / 2)"; cat out/pedal.txt
+echo "===== TOQUES (atividade e leitor)"; grep -o "Estante: toque.*" out/logcat-completo.txt | head -30
 echo "===== BARRA PRETO (esperado 3 ajustes)"; cat out/slider.txt; grep -c "ajuste de imagem" out/logcat-completo.txt; grep -o "ajuste de imagem.*" out/logcat-completo.txt | head -5
 echo "===== AUTOTESTE"; grep -E "ESTANTE_SELFTEST" out/logcat-completo.txt; grep -E "W Estante" -A 4 out/logcat-completo.txt | head -40
 echo "===== ERROS"; grep -E "FATAL|AndroidRuntime|E/.*estante" -A 25 out/logcat-completo.txt | head -150
