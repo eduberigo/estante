@@ -109,6 +109,21 @@ fun SetlistContent(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 16.dp),
         )
+        if (manual != null) {
+            val miss = SetlistRepair.missing.count { it.setlistId == manual.id }
+            val sw = SetlistRepair.swaps.count { it.setlistId == manual.id }
+            if (miss > 0 || sw > 0) {
+                Text(
+                    listOfNotNull(
+                        if (miss > 0) "⚠ $miss não encontrada(s): toque nela para substituir" else null,
+                        if (sw > 0) "$sw trocada(s) sozinha(s) por outra cópia do mesmo arquivo" else null,
+                    ).joinToString(" • ") + " — ver",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.fillMaxWidth().clickable { state.repairOpen = true }.padding(horizontal = 16.dp, vertical = 6.dp),
+                )
+            }
+        }
         HorizontalDivider(Modifier.padding(top = 6.dp))
         if (paths.isEmpty()) {
             Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
@@ -136,7 +151,7 @@ fun SetlistContent(
                             e = e,
                             selected = state.isSel(e.path),
                             fav = state.isFav(e.path),
-                            subtitle = "${i + 1}.",
+                            subtitle = if (e.file.exists() || manual == null) "${i + 1}." else "${i + 1}. toque para substituir",
                             dim = !e.file.exists(),
                             onClick = { onClickItem(entries, i) },
                             onLong = { onLongItem(entries, i) },
@@ -145,7 +160,9 @@ fun SetlistContent(
                         )
                     } else {
                         ListItemRow(
-                            e, "${i + 1}. ${state.shortFolder(e.file)}", state.isSel(e.path), state.isFav(e.path),
+                            e,
+                            if (e.file.exists()) "${i + 1}. ${state.shortFolder(e.file)}" else "${i + 1}. ⚠ não encontrado — toque para substituir",
+                            state.isSel(e.path), state.isFav(e.path),
                             { onClickItem(entries, i) }, { onLongItem(entries, i) }, state.thumbSize,
                             title = label,
                         )
@@ -157,8 +174,11 @@ fun SetlistContent(
                 items(entries.size, key = { "$it:${entries[it].path}" }) { i ->
                     val e = entries[i]
                     val plays = lib.playCount(e.path)
-                    val sub = "${i + 1}. ${state.shortFolder(e.file)}" +
-                        if (plays > 0) " • tocada ${plays}x" else ""
+                    val sub = if (!e.file.exists()) {
+                        "${i + 1}. ⚠ não encontrado — toque para substituir"
+                    } else {
+                        "${i + 1}. ${state.shortFolder(e.file)}" + if (plays > 0) " • tocada ${plays}x" else ""
+                    }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.weight(1f)) {
                             ListItemRow(
@@ -288,6 +308,7 @@ fun SetlistItemDialog(
     onShowFolder: () -> Unit,
     onAddOther: () -> Unit,
     onDismiss: () -> Unit,
+    onReplace: () -> Unit,
 ) {
     val s = lib.get(setlistId)
     var renamingItem by remember { mutableStateOf(false) }
@@ -322,6 +343,9 @@ fun SetlistItemDialog(
                     if (s.items.getOrNull(index)?.name != null) {
                         ActionRow("Voltar ao nome do arquivo") { lib.renameItem(setlistId, index, null); onDismiss() }
                     }
+                    ActionRow(
+                        if (entry.file.exists()) "Substituir por outro arquivo…" else "Substituir (arquivo não encontrado)…"
+                    ) { onReplace() }
                     ActionRow("Remover deste setlist") { lib.removeAt(setlistId, index); onDismiss() }
                 }
                 ActionRow("Adicionar a outro setlist") { onAddOther() }

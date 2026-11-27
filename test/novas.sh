@@ -8,4 +8,5 @@ adb shell settings put secure immersive_mode_confirmations confirmed
 adb shell appops set --uid $PKG MANAGE_EXTERNAL_STORAGE allow
 adb shell mkdir -p "/sdcard/Partituras/Casamentos"
 for f in test/pdfs/*; do adb push "$f" "/sdcard/Partituras/Casamentos/" >/dev/null; done
+adb shell "rm -rf /sdcard/Documents/Estante"
 python3 -u test/novas.py 2>&1 | tee out/novas.txt

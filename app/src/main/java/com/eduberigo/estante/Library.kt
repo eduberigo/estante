@@ -149,6 +149,35 @@ class Library(ctx: Context) {
         Ratings.relink(moved)
     }
 
+    /**
+     * Arquivo apagado fora do app, trocado por outra cópia: setlists e histórico apontam para a cópia
+     * (só os caminhos exatos; nome próprio no setlist é mantido).
+     */
+    fun replaceMissing(map: Map<String, String>) {
+        if (map.isEmpty()) return
+        setlists = setlists.map { sl -> sl.copy(items = sl.items.map { map[it.path]?.let { n -> it.copy(path = n) } ?: it }) }
+        saveSetlists()
+        if (history.any { it.path in map }) {
+            history = history.map { p -> map[p.path]?.let { p.copy(path = it) } ?: p }
+            try {
+                histFile.writeText(history.joinToString("") { "${it.time}\t${it.seconds}\t${it.path}\n" })
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    /** Troca a música [index] do setlist por outro arquivo (mantém o nome dado no setlist). */
+    fun replaceItem(id: String, index: Int, old: String, path: String) = update(id) {
+        val i = if (it.items.getOrNull(index)?.path == old) index else it.items.indexOfFirst { x -> x.path == old }
+        if (i < 0) {
+            it
+        } else {
+            val m = it.items.toMutableList()
+            m[i] = m[i].copy(path = path)
+            it.copy(items = m)
+        }
+    }
+
     // ---------- histórico ----------
 
     fun recordPlay(path: String, seconds: Int) {

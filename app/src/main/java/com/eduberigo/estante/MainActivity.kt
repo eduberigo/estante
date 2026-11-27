@@ -54,6 +54,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         com.tom_roush.pdfbox.android.PDFBoxResourceLoader.init(applicationContext)
         Excluded.init(applicationContext)
+        SetlistRepair.init(applicationContext)
         hasPermission.value = Environment.isExternalStorageManager()
         intent?.getStringExtra("selftest")?.let { SelfTest.run(this, it) }
         setContent {
@@ -262,6 +263,10 @@ fun App(hasPermission: Boolean, requestPermission: () -> Unit) {
             // Teste automático: garante N setlists para testar a lista rolável.
             val n = activity.intent?.getIntExtra("setlistsTeste", 0) ?: 0
             for (i in 1..n) if (l.setlists.none { it.name == "Teste $i" }) l.create("Teste $i")
+            // Teste automático: setlist "Nome|caminho1|caminho2…".
+            activity.intent?.getStringExtra("setlistCom")?.split('|')?.let { parts ->
+                if (parts.size > 1 && l.setlists.none { it.name == parts[0] }) l.create(parts[0], parts.drop(1))
+            }
         }
     }
     var reading by remember {

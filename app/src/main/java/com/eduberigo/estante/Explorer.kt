@@ -249,6 +249,14 @@ class ExplorerState(private val prefs: Prefs) {
     /** Segunda busca, dentro dos resultados da primeira. */
     var query2 by mutableStateOf("")
 
+    /** Trocando uma música de setlist por outro arquivo: o próximo arquivo tocado substitui [old]. */
+    data class Replacing(val setlistId: String, val index: Int, val old: String, val label: String, val setlist: String)
+
+    var replacing by mutableStateOf<Replacing?>(null)
+
+    /** Lista "Setlists: músicas para conferir" aberta. */
+    var repairOpen by mutableStateOf(false)
+
     /** Filtro do que está na pasta aberta (null = campo fechado). */
     var folderFilter by mutableStateOf<String?>(null)
 
@@ -526,6 +534,20 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
         }
     }
 
+    // Setlists: arquivo apagado/movido fora do app → procura outra cópia do mesmo arquivo; senão marca.
+    LaunchedEffect(state.indexVersion) {
+        if (state.indexVersion > 0) SetlistRepair.check(ctx, lib)
+    }
+
+    fun startReplace(r: ExplorerState.Replacing) {
+        state.repairOpen = false
+        state.selection = emptySet()
+        state.replacing = r
+        state.searching = true
+        state.query2 = ""
+        state.query = Meta.guess(File(r.old).nameWithoutExtension).title.ifBlank { r.label }
+    }
+
     // Busca com pequeno atraso enquanto digita.
     LaunchedEffect(state.query, state.indexVersion, state.searching) {
         if (!state.searching) return@LaunchedEffect
@@ -589,6 +611,17 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
         fun click(e: Entry) {
             if (state.selection.isNotEmpty()) {
                 state.toggleSel(e.path)
+                return
+            }
+            val rp = state.replacing
+            if (rp != null && e.kind != Kind.DIR && e.file.exists()) {
+                // Escolhendo o arquivo que substitui uma música do setlist.
+                lib.replaceItem(rp.setlistId, rp.index, rp.old, e.path)
+                state.replacing = null
+                state.closeSearch()
+                state.openSet(rp.setlistId)
+                Toast.makeText(ctx, "\"${rp.label}\" trocada no setlist \"${rp.setlist}\"", Toast.LENGTH_LONG).show()
+                scope.launch { SetlistRepair.check(ctx, lib) }
                 return
             }
             when {
@@ -812,6 +845,7 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
             Column(Modifier.padding(pad).fillMaxSize()) {
                 val browser: @Composable () -> Unit = {
                     Column(Modifier.fillMaxSize()) {
+                        state.replacing?.let { rp -> ReplaceBar(rp) { state.replacing = null } }
                         when {
                             state.searching -> SearchInfo(state, roots)
                             state.inFolder -> {
@@ -871,9 +905,17 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                                             state.selected = e
                                         } else if (e.file.exists()) {
                                             val name = lib.get(state.openSetlist!!)?.name ?: "Setlist"
-                                            onOpen(list.map { it.file }, i, name)
+                                            val ok = list.map { it.file }.filter { it.exists() }
+                                            onOpen(ok, ok.indexOf(e.file).coerceAtLeast(0), name)
                                         } else {
-                                            open(e)
+                                            val sl = lib.get(state.openSetlist!!)
+                                            if (sl != null) {
+                                                startReplace(
+                                                    ExplorerState.Replacing(sl.id, i, e.path, sl.items.getOrNull(i)?.label() ?: e.title, sl.name)
+                                                )
+                                            } else {
+                                                open(e)
+                                            }
                                         }
                                     },
                                     onLongItem = { list, i ->
@@ -883,7 +925,12 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                                     onPlay = { files, i ->
                                         val id = state.openSetlist!!
                                         val name = lib.get(id)?.name ?: lib.autoSetlists().firstOrNull { it.id == id }?.name
-                                        onOpen(files, i, name)
+                                        // Músicas sem arquivo são puladas.
+                                        val ok = files.filter { it.exists() }
+                                        if (ok.size < files.size) {
+                                            Toast.makeText(ctx, "${files.size - ok.size} música(s) sem arquivo foram puladas", Toast.LENGTH_LONG).show()
+                                        }
+                                        if (ok.isNotEmpty()) onOpen(ok, ok.indexOf(files.getOrNull(i)).coerceAtLeast(0), name)
                                     },
                                     onDeleted = { state.goHome() },
                                 )
@@ -1069,6 +1116,13 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                 entry = e,
                 onShowFolder = { setItem = null; showInFolder(e.file) },
                 onAddOther = { setItem = null; addToSetlist = e.path },
+                onReplace = {
+                    setItem = null
+                    val sl = lib.get(state.openSetlist ?: "")
+                    if (sl != null) {
+                        startReplace(ExplorerState.Replacing(sl.id, i, e.path, sl.items.getOrNull(i)?.label() ?: e.title, sl.name))
+                    }
+                },
                 onDismiss = { setItem = null },
             )
         }
@@ -1163,6 +1217,23 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
             )
         }
 
+        if (state.repairOpen) {
+            RepairDialog(
+                onReplace = { m -> startReplace(ExplorerState.Replacing(m.setlistId, m.index, m.old, m.label, m.setlist)) },
+                onReplaceSwap = { s ->
+                    val sl = lib.get(s.setlistId)
+                    val i = sl?.items?.indexOfFirst { it.path == s.new } ?: -1
+                    if (sl != null && i >= 0) {
+                        SetlistRepair.forgetSwap(s)
+                        startReplace(ExplorerState.Replacing(sl.id, i, s.new, s.label, sl.name))
+                    } else {
+                        Toast.makeText(ctx, "Essa música não está mais no setlist", Toast.LENGTH_SHORT).show()
+                        SetlistRepair.forgetSwap(s)
+                    }
+                },
+                onDismiss = { state.repairOpen = false },
+            )
+        }
         if (excludedOpen) {
             ExcludedDialog(
                 onBringBack = { bringBack(it) },
@@ -1469,6 +1540,9 @@ private fun HomeContent(
         modifier = Modifier.fillMaxSize(),
     ) {
         item(span = { GridItemSpan(maxLineSpan) }, key = "h-sets") { SectionHeader("Setlists") }
+        if (SetlistRepair.missing.isNotEmpty() || SetlistRepair.swaps.isNotEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }, key = "h-sets-repair") { RepairNotice { state.repairOpen = true } }
+        }
         items(lib.setlists.size, key = { "s:" + lib.setlists[it].id }) { i ->
             val sl = lib.setlists[i]
             GridItem(
@@ -2447,6 +2521,22 @@ private fun SelectionTopBar(
             }
         },
     )
+}
+
+/** Barra "escolha o arquivo": trocando uma música de setlist por outro arquivo. */
+@Composable
+private fun ReplaceBar(rp: ExplorerState.Replacing, onCancel: () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.tertiaryContainer) {
+        Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Toque no arquivo que vai substituir \"${rp.label}\" no setlist \"${rp.setlist}\". " +
+                    "Busque ou navegue pelas pastas.",
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier.weight(1f),
+            )
+            androidx.compose.material3.TextButton(onClick = onCancel) { Text("Cancelar") }
+        }
+    }
 }
 
 /** Barra "colar aqui": aparece depois de Copiar/Mover, enquanto você escolhe a pasta de destino. */

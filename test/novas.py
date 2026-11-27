@@ -179,4 +179,35 @@ try:
     check("barra de rolagem aparece ao lado da lista", dark > 20, f"{dark} pontos da barra (fundo {bg:.0f})")
 except Exception as e:
     check("barra de rolagem aparece ao lado da lista", False, f"não consegui medir: {e}")
+# 6) Setlist com arquivos de uma pasta apagada fora do app
+R = f"{A}/Reparo"
+sh(f'mkdir -p "{R}" "{A}/Pop Rock"; cp "{A}/Casamentos/Perfect - Ed Sheeran - X - pop - G - 95.pdf" "{A}/Pop Rock/"; '
+   f'cp "{A}/Casamentos/Perfect - Ed Sheeran - X - pop - G - 95.pdf" "{R}/"; '
+   f'cp "{A}/Casamentos/Perfect - Ed Sheeran - X - pop - G - 95.pdf" "{R}/Unica - Teste.pdf"')
+p1 = f"{R}/Perfect - Ed Sheeran - X - pop - G - 95.pdf"
+p2 = f"{R}/Unica - Teste.pdf"
+sh(f"am force-stop {PKG}")
+sh(f'am start -n {PKG}/.MainActivity --ez limpar true --es fixar "{A}" --es setlistCom "Reparo|{p1}|{p2}"')
+time.sleep(10)
+sh(f'rm -rf "{R}"')
+sh(f"am force-stop {PKG}")
+sh(f'am start -n {PKG}/.MainActivity --es fixar "{A}"')
+time.sleep(14)
+t = texts(dump())
+check("aviso no Início: faltando e trocada", any("sem arquivo" in v and "trocada" in v for v in t), str([v for v in t if "⚠" in v][:2]))
+txt = sh('cat "/sdcard/Documents/Estante/Setlists - músicas faltando.txt"')
+check("TXT com a que falta e a trocada", "Unica - Teste" in txt and "Perfect" in txt and "NÃO ENCONTRADAS" in txt, txt.replace("\n", " | ")[:300])
+tap("sem arquivo")
+t = texts(dump())
+check("lista de conferência mostra as duas", any("Unica - Teste" in v for v in t) and any("Perfect" in v for v in t))
+tap("Substituir…", exact=True, wait=3)
+t = texts(dump())
+check("abre a escolha do arquivo substituto", any("vai substituir" in v for v in t))
+tap("Limpar", exact=True)
+sh("input text Garota"); time.sleep(3)
+tap("Garota de Ipanema", wait=3)
+t = texts(dump())
+check("setlist com a música substituída", any(v.startswith("Garota de Ipanema") for v in t) and not any("Unica - Teste" in v for v in t), str([v for v in t if "Garota" in v or "Unica" in v or "Perfect" in v][:4]))
+txt = sh('cat "/sdcard/Documents/Estante/Setlists - músicas faltando.txt"')
+check("TXT sem a que já foi substituída", "Unica - Teste" not in txt and "NÃO ENCONTRADAS" not in txt, txt.replace("\n", " | ")[:200])
 print("==== FIM NOVAS")

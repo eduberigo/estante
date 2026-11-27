@@ -118,6 +118,19 @@ object SearchIndex {
             .flatMap { dirs[it].orEmpty() }.distinct().map { File(it) }
     }
 
+    @Volatile private var namesFor: List<Item>? = null
+    @Volatile private var names: Map<String, List<String>> = emptyMap()
+
+    /** Arquivos com este nome (sem diferença de acento/maiúsculas), em qualquer pasta do acervo. */
+    fun byName(fileName: String): List<String> {
+        val cur = items
+        if (namesFor !== cur) {
+            names = cur.groupBy({ Fs.norm(it.path.substringAfterLast('/')) }, { it.path })
+            namesFor = cur
+        }
+        return names[Fs.norm(fileName)].orEmpty()
+    }
+
     /** Todos os caminhos indexados (para navegar por artista, título, gênero, tom). */
     fun allPaths(): List<String> = items.asSequence().map { it.path }.filter { !Excluded.has(it) }.toList()
 
