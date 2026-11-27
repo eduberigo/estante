@@ -76,8 +76,9 @@ object SetlistRepair {
                 s.items.forEachIndexed { i, it ->
                     val f = File(it.path)
                     if (f.exists()) return@forEachIndexed
-                    // Cartão de memória fora do aparelho: não mexe.
-                    if (Fs.volumeOf(f, vols) == null) return@forEachIndexed
+                    // Cartão de memória fora do aparelho: não mexe. (Caminho real: /sdcard → /storage/emulated/0.)
+                    val real = try { f.canonicalFile } catch (e: Exception) { f }
+                    if (Fs.volumeOf(real, vols) == null && Fs.volumeOf(f, vols) == null) return@forEachIndexed
                     val target = moves[it.path] ?: findCopy(f)
                     if (target != null) {
                         moves[it.path] = target
