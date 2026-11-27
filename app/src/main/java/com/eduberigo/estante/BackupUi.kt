@@ -79,8 +79,9 @@ fun BackupDialog(state: ExplorerState, volumes: List<Volume>, onDismiss: () -> U
                 // ---------- dados do app ----------
                 Text("Dados do app", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 12.dp))
                 Text(
-                    "Setlists, histórico do que você tocou, anotações, âncoras, pastas do Início, favoritos e ajustes. " +
-                        "Arquivo pequeno, em Documentos/Estante/Backups.",
+                    "Tudo menos as partituras: setlists, histórico do que você tocou, estrelas, anotações, âncoras, " +
+                        "saltos, recortes, metrônomo e ajustes de imagem de cada partitura, o que está fora do app, " +
+                        "pastas do Início, favoritos e configurações. Arquivo pequeno, em Documentos/Estante/Backups.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -192,7 +193,8 @@ fun BackupDialog(state: ExplorerState, volumes: List<Volume>, onDismiss: () -> U
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
                     Text(
-                        "Substitui setlists, histórico, anotações e ajustes atuais pelos do backup. O app reinicia em seguida.",
+                        "Substitui setlists, histórico, estrelas, anotações e configurações atuais pelos do backup. " +
+                            "As partituras não são tocadas. O app reinicia em seguida.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                     if (list.isEmpty()) Text("Nenhum backup em Documentos/Estante/Backups.", modifier = Modifier.padding(top = 8.dp))
