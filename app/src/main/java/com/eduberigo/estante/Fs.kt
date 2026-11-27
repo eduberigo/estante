@@ -51,6 +51,8 @@ object Fs {
         val files = dir.listFiles() ?: return emptyList()
         return files.asSequence()
             .filter { !it.name.startsWith(".") }
+            // Tirados do app (continuam no aparelho).
+            .filter { !Excluded.has(it.absolutePath) }
             .map { entry(it) }
             // Só pastas, PDFs e imagens.
             .filter { it.kind != Kind.OTHER }

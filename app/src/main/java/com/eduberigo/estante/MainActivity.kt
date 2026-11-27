@@ -28,6 +28,7 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,6 +53,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         com.tom_roush.pdfbox.android.PDFBoxResourceLoader.init(applicationContext)
+        Excluded.init(applicationContext)
         hasPermission.value = Environment.isExternalStorageManager()
         intent?.getStringExtra("selftest")?.let { SelfTest.run(this, it) }
         setContent {
@@ -254,10 +256,26 @@ fun App(hasPermission: Boolean, requestPermission: () -> Unit) {
             activity.intent?.getStringExtra("pasta")?.let { st.navigate(File(it)) }
         }
     }
-    val lib = remember { Library(ctx).also { Ratings.init(ctx) } }
+    val lib = remember {
+        Library(ctx).also { l ->
+            Ratings.init(ctx)
+            // Teste automático: garante N setlists para testar a lista rolável.
+            val n = activity.intent?.getIntExtra("setlistsTeste", 0) ?: 0
+            for (i in 1..n) if (l.setlists.none { it.name == "Teste $i" }) l.create("Teste $i")
+        }
+    }
     var reading by remember {
         // Usado pelo teste automático: abrir direto um arquivo no leitor.
         mutableStateOf(activity.intent?.getStringExtra("abrir")?.let { Reading(listOf(File(it)), 0, null) })
+    }
+
+    // Abrir no leitor um arquivo recém-criado (ex.: "PDF criado. Quer abrir agora?" → Abrir).
+    val openReq = OpenRequest.file
+    LaunchedEffect(openReq) {
+        if (openReq != null) {
+            reading = Reading(listOf(openReq), 0, null)
+            OpenRequest.file = null
+        }
     }
 
     val r = reading

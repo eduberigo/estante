@@ -377,7 +377,7 @@ object Ratings {
         save()
     }
 
-    fun count(n: Int) = map.values.count { it == n }
+    fun count(n: Int) = map.count { it.value == n && !Excluded.has(it.key) }
 
     private fun save() {
         val f = file ?: return

@@ -54,7 +54,7 @@ object SearchIndex {
             if (!force && cache.exists()) {
                 val lines = try { cache.readLines() } catch (e: Exception) { emptyList() }
                 if (lines.isNotEmpty() && lines[0] == s) {
-                    items = lines.drop(1).filter { it.isNotBlank() }.map { make(roots, it) }
+                    items = lines.drop(1).filter { it.isNotBlank() && !Excluded.has(it) }.map { make(roots, it) }
                     sig = s
                     return@withContext
                 }
@@ -62,11 +62,15 @@ object SearchIndex {
             val seen = HashSet<String>()
             val out = ArrayList<Item>()
             for (root in roots) {
+                if (Excluded.has(root.absolutePath)) continue
                 root.walkTopDown()
-                    .onEnter { it == root || !it.name.startsWith(".") }
+                    // Pastas tiradas do app (fora do app) não são lidas.
+                    .onEnter { it == root || (!it.name.startsWith(".") && !Excluded.has(it.absolutePath)) }
                     .forEach { f ->
                         ensureActive()
-                        if (f.isFile && !f.name.startsWith(".") && Fs.kindOf(f, false) != Kind.OTHER && seen.add(f.absolutePath)) {
+                        if (f.isFile && !f.name.startsWith(".") && Fs.kindOf(f, false) != Kind.OTHER &&
+                            !Excluded.has(f.absolutePath) && seen.add(f.absolutePath)
+                        ) {
                             out.add(make(roots, f.absolutePath))
                             if (out.size % 250 == 0) onProgress(out.size)
                         }
@@ -115,7 +119,7 @@ object SearchIndex {
     }
 
     /** Todos os caminhos indexados (para navegar por artista, título, gênero, tom). */
-    fun allPaths(): List<String> = items.map { it.path }
+    fun allPaths(): List<String> = items.asSequence().map { it.path }.filter { !Excluded.has(it) }.toList()
 
     /** Todas as palavras precisam aparecer no caminho (pasta + nome), sem acento. */
     fun search(query: String, limit: Int = 400): List<Entry> {
@@ -124,6 +128,7 @@ object SearchIndex {
         val missing = HashSet<String>()
         val out = items.asSequence()
             .filter { item -> tokens.all { item.key.contains(it) } }
+            .filter { item -> !Excluded.has(item.path) }
             // Arquivo apagado ou movido fora do app: some da busca (e do índice).
             .filter { item -> File(item.path).exists().also { ok -> if (!ok) missing.add(item.path) } }
             .take(limit)

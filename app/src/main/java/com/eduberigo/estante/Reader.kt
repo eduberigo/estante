@@ -420,6 +420,9 @@ fun ReaderScreen(
                                 maxLines = 1,
                             )
                         }
+                        // Classificação desta partitura, sempre à vista no topo.
+                        val starPath = imageFiles?.getOrNull(pager.currentPage)?.absolutePath ?: file.absolutePath
+                        StarsRow(Ratings.of(starPath), { n -> Ratings.set(listOf(starPath), n) }, size = 30)
                     }
                     if (position != null) {
                         IconButton(enabled = onPrevSong != null, onClick = { onPrevSong?.invoke(false) }) {
@@ -461,9 +464,6 @@ fun ReaderScreen(
                         )
                     }
                     if (imageFiles != null) BarButton("Salvar PDF", true) { savePdf = true }
-                    val curPath = imageFiles?.getOrNull(pager.currentPage)?.absolutePath ?: file.absolutePath
-                    Spacer(Modifier.width(8.dp))
-                    StarsRow(Ratings.of(curPath), { n -> Ratings.set(listOf(curPath), n) }, size = 28)
                 }
             }
             if (count > 1) {

@@ -109,6 +109,8 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -247,6 +249,9 @@ class ExplorerState(private val prefs: Prefs) {
     /** Segunda busca, dentro dos resultados da primeira. */
     var query2 by mutableStateOf("")
 
+    /** Filtro do que está na pasta aberta (null = campo fechado). */
+    var folderFilter by mutableStateOf<String?>(null)
+
     /** O que está na tela agora (para "Selecionar todos"). */
     var visible: List<Entry> = emptyList()
 
@@ -297,6 +302,7 @@ class ExplorerState(private val prefs: Prefs) {
     fun navigate(to: File) {
         if (!to.isDirectory) return
         selected = null
+        if (to.absolutePath != dir.absolutePath) folderFilter = null
         dir = to
         atHome = false
         openSetlist = null
@@ -429,6 +435,8 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
     var renaming by remember { mutableStateOf<Entry?>(null) }
     var bulk by remember { mutableStateOf(false) }
     var pedalTest by remember { mutableStateOf(false) }
+    var excludedOpen by remember { mutableStateOf(false) }
+    var merging by remember { mutableStateOf<List<String>?>(null) }
     var fullscreenPref by remember { mutableStateOf(Prefs(ctx).readerFullscreen) }
 
     /** Depois de apagar/mover/renomear/criar: índice da busca atualizado. */
@@ -436,6 +444,30 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
         if (removed.isNotEmpty()) SearchIndex.forget(removed)
         state.indexVersion++
         scope.launch { SearchIndex.ensure(ctx, state.searchRoots(volumes), force = true) { }; state.indexVersion++ }
+    }
+
+    /** Tira do app (não apaga do aparelho): some das listas, da busca e da navegação. */
+    fun excludeFromApp(paths: List<String>) {
+        if (paths.isEmpty()) return
+        Excluded.add(paths)
+        SearchIndex.forget(paths)
+        state.selection = emptySet()
+        if (state.selected?.let { Excluded.has(it.path) } == true) state.selected = null
+        if (state.searching) state.results = state.results.filterNot { Excluded.has(it.path) }
+        state.reloadTick++
+        state.indexVersion++
+        Toast.makeText(
+            ctx,
+            "Fora do app: ${paths.size} ${if (paths.size == 1) "item" else "itens"}. Continuam no aparelho. " +
+                "Para trazer de volta: menu ⋮ → Fora do app.",
+            Toast.LENGTH_LONG,
+        ).show()
+    }
+
+    fun bringBack(paths: List<String>) {
+        Excluded.remove(paths)
+        state.reloadTick++
+        reindex()
     }
 
     // Ao voltar para o app (arquivos podem ter mudado em outro app): atualiza o índice.
@@ -582,7 +614,7 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                 if (state.selection.isNotEmpty()) {
                     SelectionTopBar(
                         state = state,
-                        visible = if (state.inFolder && !state.searching) state.entries else state.visible,
+                        visible = state.visible,
                         onOptions = {
                             val sel = state.selection.toList()
                             if (sel.size == 1) {
@@ -742,6 +774,10 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                                         },
                                     )
                                     DropdownMenuItem(
+                                        text = { Text("Fora do app (${Excluded.set.size})…") },
+                                        onClick = { menuOpen = false; excludedOpen = true },
+                                    )
+                                    DropdownMenuItem(
                                         text = { Text("Testar pedal…") },
                                         onClick = { menuOpen = false; pedalTest = true },
                                     )
@@ -778,7 +814,21 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                     Column(Modifier.fillMaxSize()) {
                         when {
                             state.searching -> SearchInfo(state, roots)
-                            state.inFolder -> Breadcrumbs(state.dir, volumes) { state.navigate(it) }
+                            state.inFolder -> {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(Modifier.weight(1f)) { Breadcrumbs(state.dir, volumes) { state.navigate(it) } }
+                                    IconButton(onClick = {
+                                        state.folderFilter = if (state.folderFilter == null) "" else null
+                                    }) {
+                                        Icon(
+                                            Icons.Filled.Search, "Filtrar nesta pasta",
+                                            tint = if (state.folderFilter != null) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                                if (state.folderFilter != null) FolderFilterField(state)
+                            }
                         }
                         if (state.loading && !state.searching && state.inFolder) {
                             LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
@@ -837,7 +887,7 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                                     },
                                     onDeleted = { state.goHome() },
                                 )
-                                else -> FolderContent(state, ::click, ::longClick)
+                                else -> FolderContent(state, ::click, ::longClick, onShowExcluded = { excludedOpen = true })
                             }
                         }
                         val c = state.clip
@@ -854,6 +904,7 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                                         lib.relink(r.moved)
                                         AnnStore.relink(ctx, r.moved)
                                         state.relink(r.moved)
+                                        if (c.move) Excluded.relink(r.moved)
                                         state.reloadTick++
                                         reindex(r.moved.keys)
                                         Toast.makeText(
@@ -958,6 +1009,7 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                         lib.relink(moved)
                         AnnStore.relink(ctx, moved)
                         state.relink(moved)
+                        Excluded.relink(moved)
                         if (state.selected?.path == f.absolutePath) state.selected = Fs.entry(dst)
                         state.reloadTick++
                         if (state.searching) state.results = state.results.map { if (it.path == f.absolutePath) Fs.entry(dst) else it }
@@ -1070,6 +1122,8 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                 onStars = { n -> Ratings.set(state.selection.filter { File(it).isFile }, n) },
                 onPrepare = { bulk = false; prepare = state.selection.toList() },
                 onDelete = { bulk = false; confirmDelete = state.selection.toList() },
+                onMerge = { bulk = false; merging = state.selection.filter { File(it).isFile } },
+                onExclude = { bulk = false; excludeFromApp(state.selection.toList()) },
             )
         }
 
@@ -1104,6 +1158,27 @@ fun ExplorerScreen(state: ExplorerState, lib: Library, onOpen: (List<File>, Int,
                     if (state.selection == setOf(e.path)) state.selection = emptySet()
                 },
                 onShowFolder = if (showFolderAction && e.kind != Kind.DIR) ({ actionsEntry = null; showInFolder(e.file) }) else null,
+                // Pasta do Início: use "Remover do Início".
+                onExclude = if (!state.isPinned(e.path)) ({ actionsEntry = null; excludeFromApp(listOf(e.path)) }) else null,
+            )
+        }
+
+        if (excludedOpen) {
+            ExcludedDialog(
+                onBringBack = { bringBack(it) },
+                onDismiss = { excludedOpen = false },
+            )
+        }
+        merging?.let { ps ->
+            MergePdfDialog(
+                paths = ps,
+                lib = lib,
+                onCreated = {
+                    state.selection = emptySet()
+                    state.reloadTick++
+                    reindex()
+                },
+                onDismiss = { merging = null },
             )
         }
     }
@@ -1188,10 +1263,12 @@ private fun ActionsDialog(
     onPrepare: (() -> Unit)?,
     onDismiss: () -> Unit,
     onShowFolder: (() -> Unit)?,
+    onExclude: (() -> Unit)?,
 ) {
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = RoundedCornerShape(16.dp)) {
-            Column(Modifier.padding(vertical = 8.dp).fillMaxWidth()) {
+            val scroll = rememberScrollState()
+            Column(Modifier.padding(vertical = 8.dp).fillMaxWidth().scrollBar(scroll).verticalScroll(scroll)) {
                 Text(
                     e.title,
                     style = MaterialTheme.typography.titleMedium,
@@ -1246,6 +1323,10 @@ private fun ActionsDialog(
                 if (onAddToSetlist != null) ActionRow("Adicionar a setlist…") { onAddToSetlist() }
                 if (onPrepare != null) ActionRow("Gravar ajustes de imagem no arquivo (modo legível)…") { onPrepare() }
                 if (onShowFolder != null) ActionRow("Mostrar na pasta") { onShowFolder() }
+                if (onExclude != null) {
+                    HorizontalDivider()
+                    ActionRow("Tirar do app (não apaga do aparelho)") { onExclude() }
+                }
             }
         }
     }
@@ -1571,11 +1652,49 @@ internal fun HintText(text: String) {
 }
 
 @Composable
-private fun FolderContent(state: ExplorerState, onClick: (Entry) -> Unit, onLong: (Entry) -> Unit) {
-    val entries = state.entries
+private fun FolderContent(
+    state: ExplorerState,
+    onClick: (Entry) -> Unit,
+    onLong: (Entry) -> Unit,
+    onShowExcluded: () -> Unit,
+) {
+    val tokens = remember(state.folderFilter) {
+        Fs.norm(state.folderFilter.orEmpty()).split(' ', '\t').filter { it.isNotBlank() }
+    }
+    val entries = remember(state.entries, tokens) {
+        if (tokens.isEmpty()) state.entries else state.entries.filter { e -> Fs.norm(e.name).let { k -> tokens.all { k.contains(it) } } }
+    }
+    androidx.compose.runtime.SideEffect { state.visible = entries }
+    val hidden = remember(state.dir, Excluded.set) { Excluded.countIn(state.dir) }
+    Column(Modifier.fillMaxSize()) {
+        if (hidden > 0) {
+            Text(
+                "$hidden ${if (hidden == 1) "item desta pasta está" else "itens desta pasta estão"} fora do app • ver",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.fillMaxWidth().clickable { onShowExcluded() }.padding(horizontal = 16.dp, vertical = 6.dp),
+            )
+        }
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            FolderEntries(state, entries, tokens, onClick, onLong)
+        }
+    }
+}
+
+@Composable
+private fun FolderEntries(
+    state: ExplorerState,
+    entries: List<Entry>,
+    tokens: List<String>,
+    onClick: (Entry) -> Unit,
+    onLong: (Entry) -> Unit,
+) {
     if (entries.isEmpty() && !state.loading) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("Pasta vazia", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                if (tokens.isEmpty()) "Pasta vazia" else "Nada nesta pasta com \"${state.folderFilter?.trim()}\"",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         return
     }
@@ -1627,17 +1746,35 @@ private fun FolderContent(state: ExplorerState, onClick: (Entry) -> Unit, onLong
             LazyVerticalGrid(columns = GridCells.Adaptive(ColumnWidth), modifier = Modifier.fillMaxSize()) {
                 items(entries.size, key = { entries[it].path }) { i ->
                     val e = entries[i]
-                    ListItemRow(e, null, state.isSel(e.path), state.isFav(e.path), { onClick(e) }, { onLong(e) }, state.thumbSize)
+                    ListItemRow(e, null, state.isSel(e.path), state.isFav(e.path), { onClick(e) }, { onLong(e) }, state.thumbSize, highlight = tokens)
                 }
             }
         } else {
             LazyColumn(state = ls, modifier = Modifier.fillMaxSize()) {
                 items(entries, key = { it.path }) { e ->
-                    ListItemRow(e, null, state.isSel(e.path), state.isFav(e.path), { onClick(e) }, { onLong(e) }, state.thumbSize)
+                    ListItemRow(e, null, state.isSel(e.path), state.isFav(e.path), { onClick(e) }, { onLong(e) }, state.thumbSize, highlight = tokens)
                 }
             }
         }
     }
+}
+
+/** Campo do filtro da pasta: filtra só o que já está na tela (não busca em outras pastas). */
+@Composable
+private fun FolderFilterField(state: ExplorerState) {
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    androidx.compose.material3.OutlinedTextField(
+        value = state.folderFilter.orEmpty(),
+        onValueChange = { state.folderFilter = it },
+        singleLine = true,
+        placeholder = { Text("Filtrar o que está nesta pasta…") },
+        leadingIcon = { Icon(Icons.Filled.Search, null) },
+        trailingIcon = {
+            IconButton(onClick = { state.folderFilter = null }) { Icon(Icons.Filled.Clear, "Fechar filtro") }
+        },
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).focusRequester(focus),
+    )
 }
 
 @Composable
@@ -1899,19 +2036,42 @@ internal fun ListItemRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        // Coluna de classificação (estrelas).
+        // Coluna de classificação: toque numa estrela para dar a nota (tocar na mesma nota apaga).
+        // Durante a seleção múltipla as estrelas só aparecem (o toque marca/desmarca o item).
         if (e.kind != Kind.DIR) {
-            val stars = Ratings.of(e.path)
-            Text(
-                if (stars > 0) "★".repeat(stars) + "☆".repeat(5 - stars) else "",
-                color = FavColor,
-                style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier.padding(start = 8.dp).width(78.dp),
-                textAlign = TextAlign.End,
-            )
+            ListStars(Ratings.of(e.path), enabled = sel == null) { n -> Ratings.set(listOf(e.path), n) }
         }
         if (fav) {
             Icon(Icons.Filled.Star, "Favorito", Modifier.padding(start = 8.dp).size(20.dp), tint = FavColor)
+        }
+    }
+}
+
+/** Cinco estrelas pequenas na linha da lista, cada uma com área de toque própria. */
+@Composable
+private fun ListStars(value: Int, enabled: Boolean, onSet: (Int) -> Unit) {
+    Row(Modifier.padding(start = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        (1..5).forEach { n ->
+            val on = n <= value
+            Box(
+                Modifier
+                    .size(width = 25.dp, height = 40.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .then(
+                        if (enabled) {
+                            Modifier
+                                .semantics { contentDescription = if (n == 1) "1 estrela" else "$n estrelas" }
+                                .clickable { onSet(if (n == value) 0 else n) }
+                        } else Modifier
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    if (on) "★" else "☆",
+                    color = if (on) FavColor else MaterialTheme.colorScheme.outline.copy(alpha = 0.55f),
+                    fontSize = androidx.compose.ui.unit.TextUnit(17f, androidx.compose.ui.unit.TextUnitType.Sp),
+                )
+            }
         }
     }
 }
@@ -2428,11 +2588,14 @@ private fun BulkDialog(
     onStars: (Int) -> Unit,
     onPrepare: () -> Unit,
     onDelete: () -> Unit,
+    onMerge: () -> Unit,
+    onExclude: () -> Unit,
 ) {
     var stars by remember { mutableIntStateOf(0) }
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = RoundedCornerShape(16.dp)) {
-            Column(Modifier.padding(vertical = 8.dp).fillMaxWidth()) {
+            val scroll = rememberScrollState()
+            Column(Modifier.padding(vertical = 8.dp).fillMaxWidth().scrollBar(scroll).verticalScroll(scroll)) {
                 Text(
                     "$count selecionados",
                     style = MaterialTheme.typography.titleMedium,
@@ -2447,6 +2610,7 @@ private fun BulkDialog(
                     StarsRow(stars, { n -> stars = n; onStars(n) })
                 }
                 ActionRow("Adicionar a setlist…") { onAddToSetlist() }
+                ActionRow("Juntar em um PDF…") { onMerge() }
                 ActionRow("Mover para…") { onMove() }
                 ActionRow("Copiar para…") { onCopy() }
                 ActionRow("Adicionar aos favoritos") { onFav() }
@@ -2457,6 +2621,8 @@ private fun BulkDialog(
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.fillMaxWidth().clickable { onDelete() }.padding(horizontal = 20.dp, vertical = 14.dp),
                 )
+                HorizontalDivider()
+                ActionRow("Tirar do app (não apaga do aparelho)") { onExclude() }
             }
         }
     }
@@ -2465,7 +2631,7 @@ private fun BulkDialog(
 /** Arquivos com N estrelas (uma "lista" automática). */
 @Composable
 private fun RatingContent(state: ExplorerState, n: Int, onClick: (Entry) -> Unit, onLong: (Entry) -> Unit) {
-    val paths = Ratings.map.filterValues { it == n }.keys
+    val paths = Ratings.map.filter { it.value == n && !Excluded.has(it.key) }.keys
     val list by produceState(emptyList<Entry>(), paths) {
         value = withContext(Dispatchers.IO) {
             paths.map { File(it) }.filter { it.exists() }.map { Fs.entry(it) }

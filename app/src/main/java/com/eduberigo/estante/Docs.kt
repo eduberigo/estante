@@ -50,7 +50,7 @@ fun openDoc(f: File): Doc? = try {
         Kind.PDF -> PdfDoc(f)
         Kind.IMAGE -> {
             val sib = f.parentFile?.listFiles()
-                ?.filter { it.isFile && !it.name.startsWith(".") && Fs.kindOf(it, false) == Kind.IMAGE }
+                ?.filter { it.isFile && !it.name.startsWith(".") && Fs.kindOf(it, false) == Kind.IMAGE && (it == f || !Excluded.has(it.absolutePath)) }
                 ?.sortedWith(Comparator { a, b -> NaturalOrder.compare(a.name, b.name) })
                 .orEmpty()
             if (sib.size > 1 && f in sib) MultiImageDoc(sib, sib.indexOf(f)) else ImageDoc(f)

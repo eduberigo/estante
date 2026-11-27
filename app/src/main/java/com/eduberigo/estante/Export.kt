@@ -175,9 +175,19 @@ object Export {
     }
 
     /** Fichário: tudo num PDF só, com marcadores (índice) por música. */
-    suspend fun binder(ctx: Context, s: Setlist, o: Flatten.Opts): Result = withContext(Dispatchers.IO) {
-        val dir = exportDir(s.name)
-        val dst = unique(dir, s.name, "pdf")
+    suspend fun binder(ctx: Context, s: Setlist, o: Flatten.Opts): Result =
+        merge(
+            ctx,
+            s.items.mapIndexed { i, it -> File(it.path) to "${i + 1}. ${it.label()}" },
+            unique(exportDir(s.name), s.name, "pdf"),
+            o,
+        )
+
+    /**
+     * Junta PDFs e imagens em um PDF só ([dst]), na ordem dada, com um marcador por arquivo
+     * (o texto de cada par). [o] = o que gravar dentro (anotações, recortes, ajustes).
+     */
+    suspend fun merge(ctx: Context, items: List<Pair<File, String>>, dst: File, o: Flatten.Opts): Result = withContext(Dispatchers.IO) {
         val skipped = mutableListOf<String>()
         val opened = mutableListOf<PDDocument>()
         val temps = mutableListOf<File>()
@@ -185,14 +195,13 @@ object Export {
         try {
             newDoc().use { doc ->
                 val merger = PDFMergerUtility()
-                s.items.forEachIndexed { i, it ->
-                    val src = File(it.path)
+                items.forEach { (src, label) ->
                     val start = doc.numberOfPages
                     try {
                         if (Fs.kindOf(src) !in setOf(Kind.PDF, Kind.IMAGE)) {
-                            skipped.add(it.label())
+                            skipped.add(label)
                         } else {
-                            val tmp = File(ctx.cacheDir, "fichario-${System.nanoTime()}.pdf")
+                            val tmp = File(ctx.cacheDir, "juntar-${System.nanoTime()}.pdf")
                             temps.add(tmp)
                             Flatten.process(ctx, src, tmp, o)
                             val d = PDDocument.load(tmp, MemoryUsageSetting.setupTempFileOnly())
@@ -201,11 +210,12 @@ object Export {
                             merger.appendDocument(doc, d)
                         }
                     } catch (e: Throwable) {
-                        skipped.add(it.label())
+                        skipped.add(label)
                     }
-                    if (doc.numberOfPages > start) marks.add("${i + 1}. ${it.label()}" to start)
+                    if (doc.numberOfPages > start) marks.add(label to start)
                 }
-                // Índice só com as músicas (descarta marcadores que vieram dos arquivos originais).
+                if (doc.numberOfPages == 0) throw IllegalStateException("nenhum arquivo pôde ser lido")
+                // Índice só com os arquivos juntados (descarta marcadores que vieram dos originais).
                 val outline = PDDocumentOutline()
                 for ((title, page) in marks) {
                     val item = PDOutlineItem()

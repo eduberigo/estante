@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       teste:
-        description: 'tudo ou botoes'
+        description: 'tudo, botoes ou novas'
         default: 'tudo'
       tempo:
         description: 'segundos para o teste de botões'

@@ -92,7 +92,7 @@ fun SaveImagesPdfDialog(files: List<File>, current: Int, lib: Library, onDismiss
             Column(Modifier.padding(20.dp).verticalScroll(rememberScrollState())) {
                 val done = saved
                 if (done != null) {
-                    Text("PDF salvo", style = MaterialTheme.typography.titleLarge)
+                    Text("PDF criado. Quer abrir agora?", style = MaterialTheme.typography.titleLarge)
                     Text(done.name, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 8.dp))
                     Text(
                         done.parent.orEmpty().substringAfter("/0/"),
@@ -103,8 +103,9 @@ fun SaveImagesPdfDialog(files: List<File>, current: Int, lib: Library, onDismiss
                         Modifier.fillMaxWidth().padding(top = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                     ) {
-                        OutlinedButton(onClick = { addTo = true }) { Text("Adicionar a setlist") }
-                        Button(onClick = onDismiss) { Text("OK") }
+                        OutlinedButton(onClick = { addTo = true }) { Text("Pôr em setlist") }
+                        TextButton(onClick = onDismiss) { Text("Agora não") }
+                        Button(onClick = { OpenRequest.file = done; onDismiss() }) { Text("Abrir") }
                     }
                     return@Column
                 }

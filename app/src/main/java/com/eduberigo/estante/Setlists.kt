@@ -243,7 +243,9 @@ fun AddToSetlistDialog(lib: Library, paths: List<String>, onDismiss: () -> Unit)
                 )
                 HorizontalDivider()
                 ActionRow("+ Novo setlist…") { creating = true }
-                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                val listScroll = rememberScrollState()
+                // Barra discreta à direita: mostra que há mais setlists para baixo.
+                Column(Modifier.heightIn(max = 420.dp).scrollBar(listScroll).verticalScroll(listScroll)) {
                     lib.setlists.forEach { s ->
                         val has = !many && s.items.any { it.path == paths.firstOrNull() }
                         Row(
@@ -383,6 +385,13 @@ fun ExportDialog(s: Setlist, onDismiss: () -> Unit) {
                         Text(busy!!, modifier = Modifier.padding(start = 16.dp))
                     }
                     r != null -> {
+                        if (r.files.singleOrNull()?.extension.equals("pdf", true)) {
+                            Text(
+                                "Fichário criado. Quer abrir agora?",
+                                style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+                            )
+                        }
                         Text(
                             "Salvo em Documentos/Estante/${Export.safe(s.name)}\n" +
                                 "${r.files.size} arquivo(s)" +
@@ -394,7 +403,14 @@ fun ExportDialog(s: Setlist, onDismiss: () -> Unit) {
                             horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                         ) {
                             OutlinedButton(onClick = { Export.shareFiles(ctx, r.files) }) { Text("Compartilhar") }
-                            Button(onClick = onDismiss) { Text("OK") }
+                            val single = r.files.singleOrNull()?.takeIf { it.extension.equals("pdf", true) }
+                            if (single != null) {
+                                // Fichário criado: pergunta se quer abrir.
+                                TextButton(onClick = onDismiss) { Text("Agora não") }
+                                Button(onClick = { OpenRequest.file = single; onDismiss() }) { Text("Abrir") }
+                            } else {
+                                Button(onClick = onDismiss) { Text("OK") }
+                            }
                         }
                     }
                     else -> {
